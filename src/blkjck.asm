@@ -30,10 +30,11 @@ vrampage1	equ	0A1h	;output 04000h-07FFFh
 vrampage2	equ	0A2h	;output 08000h-0BFFFh
 vrampage3	equ	0A3h	;output 0C000h-0FFFFh
 
-mainpage0	equ	0000$0000b	;program+bdos
-mainpage1	equ	0000$0001b	;program
-mainpage2	equ	0000$0010b	;program
-mainpage3	equ	0000$0011b	;ccp, bdos, cpm
+					;yes the numbers are backwards :/
+mainpage0	equ	0000$0011b	;program+bdos
+mainpage1	equ	0000$0010b	;program
+mainpage2	equ	0000$0001b	;program
+mainpage3	equ	0000$0000b	;ccp, bdos, cpm
 
 drampage0	equ	1000$0000b	;16kb (first 4/5 vertical lines)
 drampage1	equ	1000$0001b	;4kb repeats to fill
@@ -49,34 +50,34 @@ gy	equ	00001h		;move v 1 cell in dram (1px)
 ;program start
 tpa	equ	00100h
 	org	tpa
+init:
+	lxi	h,0		;HL=SP
+	dad	sp
+	shld	cpmstack	;cpmstack=SP
+	lxi	sp,progstack	;SP=program stack
 start:	
-	;call	loaddram	;load dram
-	;call	resetscroll	;reset dram scroll
-	;call	drawwelcome	;ret draw the welcome screen
-				;define tsalt from ui
-	
-	lxi	h,dram		;hl=dram
-	lxi	d,01010h	;x=16 y=16
-	dad	d		;hl=dram[16][16]
+	call	loaddram	;load dram
+	call	resetscroll	;reset dram scroll
+
+	lxi	h,dram		;cursor = (0,0)
 	shld	cursor		;set cursor
 
-	lxi	d,00000h	;x1=0  y1=0
-	lxi	h,00A0Ah	;x2=10 y2=10
-	mvi	b,1010$1010b	;fill byte
-	call	grectf		;draw filled rectange
+	xra	a		;A=0  fill byte
+	lxi	d,00000h	;DE=0000  start offset
+	lxi     h,050FFh	;HL=50FF  end offset (full screen)
+	call	grectf		;clear the screen
 
-	lxi	h,cursor+offsetx;get cursor.x
-	mov	a,m		;in a
-	adi	010h		;move it right 16 cells	
-	mov	m,a		;saves it
+	call	drawwelcome	;ret draw the welcome screen
+				;define tsalt from ui
 
-
-	lxi	d,00000h	;x1=0  y1=0
-	lxi	h,00A0Ah	;x2=10 y2=10
-	call	grect		;draw rectange
-
-exit:
+	;done. clean up
 	call	loadmainram	;restore ram (cpm)
+	
+	mvi	c,001h
+	call	0005h
+exit:
+	lhld	cpmstack	;HL=cpmstack
+	SPHL			;SP=cpmstack
 	rst	0		;warm-boot
 halt:	hlt
 	jmp	halt
@@ -157,16 +158,15 @@ gdraw:	;HL=pixel array
 	shld	gdraw$arrptr	;store pixelarray
 	xchg			;HL=array len
 	shld	gdraw$i		;store arraylen
-gdrawlc:	;loop check
+gdraw$loop:
 	lhld	gdraw$i
 	xra	A		;A=0
 	cmp	H		;if (H == 0 && L == 0) break;
-	jnz	gdrawl
+	jnz	gdraw$block
 	cmp	L
-	jnz	gdrawl
-	;continue after loop finished
-	ret
-gdrawl:		;loop
+	jz	gdraw$done
+	;fall through
+gdraw$block:
 	lhld	gdraw$arrptr	;HL=*struct pixel
 	mov	e,m		;DE=pixel->offset (little endian)
 	inx	h
@@ -189,7 +189,11 @@ gdrawl:		;loop
 	lhld	gdraw$i		;HL=iter
 	dcx	h		;HL--
 	shld	gdraw$i		;iter=HL
-	jmp	gdrawlc		;check if loop is finished
+
+	jmp	gdraw$loop	;loop
+
+gdraw$done:
+	ret
 ;/*}}}*/
 
 
@@ -197,55 +201,63 @@ gdrawl:		;loop
 ;draws a filled rectange from offset_a (top left) to offset_b (bottom right)
 ;side effects: dram[*]
 ;/*{{{*/
-grectf$fill:	DS	1
-grectf$init:	DS	offsetsize
-grectf$last:	DS	offsetsize
+grectf$data:	DS	1
+grectf$start:	DS	offsetsize
+grectf$end:	DS	offsetsize
 grectf$i:	DS	offsetsize
 
-grectf:
-	sta	grectf$fill	;store fill byte
-	shld	grectf$last	;store last
+grectf:	;A=data  DE=point1  HL=point2
+	sta	grectf$data	;store data
+	shld	grectf$end	;store end
 	xchg			;store start
-	shld	grectf$init
-	shld	grectf$i	;i=start	
-	
-	;fall through
-grectf$xchk:
-	lxi	h,grectf$i+offsetx	;HL=&i.x
-	mov	b,m			;B=i.x
-	lda	grectf$last+offsetx	;A=last.x
-	cmp	b			;while (i.x < last.x) xloop
-	jnc	grectf$xloop
-	;xloop over
-	ret				;return to caller (exit proc)
+	shld	grectf$start
 
+;grectf$xinit:
+	lda	grectf$start+offsetx	;i.x = start.x
+	sta	grectf$i+offsetx
+
+	;fallthrough
 grectf$xloop:
-	lda	grectf$init+offsety	;i.y = init.y
+	lda	grectf$i+offsetx	;B=i.x
+	mov	b,a
+	lda	grectf$end+offsetx	;A=end.x
+	cmp	b			;if (i.x >= end.x) break
+	jc	grectf$xdone
+	jz	grectf$xdone
+
+;grectf$yinit:
+	lda	grectf$start+offsety	;i.y = start.y
 	sta	grectf$i+offsety
-	;fall through
-grectf$ychk:
-	lxi	h,grectf$i+offsety	;HL=&i.y
-	lxi	b,m			;B=i.y
-	lda	grectf$last+offsety	;A=last.y
-	cmp	b			;while (i.y < last.y) yloop
-	jnc	grectf$yloop			
-	;yloop over	
-	lxi	h,grectf$i+offsetx	;i.x++
-	inr	m
 
-	jmp	grectf$xchk		;draw next line
+	;fallthrough
 grectf$yloop:
-	lhld	grectf$i		;HL=i
-	lxi	d,cursor		;DE=cursor
-	dad	d			;HL=cursor+i
+	lda	grectf$i+offsety	;B=i.y
+	mov	b,a
+	lda	grectf$end+offsety	;A=end.y
+	cmp	b			;if (i.y >= end.y) break
+	jc	grectf$ydone
+	jz	grectf$ydone
 
-	sta	grectf$fill		;A=fillbyte	
-	mov	m,a			;draw fill byte to dram
+	lda	grectf$data		;A=data
+	lhld	cursor			;HL=cursor
+	xchg				;DE=cursor
+	lhld	grectf$i		;HL=i
+	dad	d			;HL=cursor + i
+	mov	m,a			;*(HL)=data
 
 	lxi	h,grectf$i+offsety	;i.y++
 	inr	m
 
-	jmp	grectf$ychk
+	jmp	grectf$yloop		;loop yloop
+
+grectf$ydone:
+	lxi	h,grectf$i+offsetx	;i.x++
+	inr	m
+
+	jmp	grectf$xloop		;loop xloop
+
+grectf$xdone:
+	ret				;return to caller
 ;/*}}}*/	
 
 
@@ -253,90 +265,91 @@ grectf$yloop:
 ;draw a rectange from offset_a (top left) to offset_b (bottom right)
 ;side effects: dram[*]
 ;/*{{{*/
-grect$init:	DS	offsetsize
-grect$last:	DS	offsetsize
+grect$start:	DS	offsetsize
+grect$end:	DS	offsetsize
 grect$i:	DS	offsetsize
 
-grect$btop:	DB	1111$1111b
-grect$bbottom:	DB	1111$1111b
-grect$bleft:	DB	1000$0000b
-grect$bright:	DB	0000$0001b
+grect$top:	DB	1111$1111b
+grect$bottom:	DB	1111$1111b
+grect$left:	DB	1000$0000b
+grect$right:	DB	0000$0001b
 
 grect:
-	shld	grect$last	;store last
-	xchg			;stort init
-	shld	grect$init
+	shld	grect$end	;store end
+	xchg			;stort start
+	shld	grect$start
 
-	;fall throught
-grect$lftrght:			;draw left and right
-	lhld	grect$init	;hl=init
-	shld	grect$i		;i=hl
+;grect$yinit:	;draw left and right using yloop
+	lhld	grect$start		;i=start
+	shld	grect$i
+	
+grect$yloop:	
+	lda	grect$i+offsety		;B=i.y
+	mov	b,a
+	lda	grect$end+offsety	;A=end.y
+	cmp	b			;if (i.y >= end.y) break
+	jc	grect$ydone
+	jz	grect$ydone
 
-	lda	grect$bleft	;a=leftvalue
-	mov	b,a		;b=leftvalue
-	lda	grect$bright	;a=rightvalue
-	mov	c,a		;c=rightvalue
-
-	;fall through
-grect$lrchk:
+	lhld	cursor			;DE=cursor
+	xchg
 	lhld	grect$i			;HL=i
-	lda	grect$last+offsety	;A=last.y
-	cmp	l			;while (i.y <= last.y) tbloop
-	jnc	grect$tbloop
-	;lrloop over
-	jmp	grect$topbtm		;draw top and bottom
+	dad	d			;HL=cursor+i
+	lda	grect$left		;A=left byte
+	mov	m,a			;*(HL)=left byte
 
-grect$lrloop:
-	lxi	d,cursor		;de=cursor
-	dad	d			;hl=cursor + i
-
-	mov	m,b			;draw the left border cell
-
-	lda	grect$last+offsetx	;get address of the right cell
-	add	d			;get the x address in ref on cursor (de)
-	mov	h,a			;a=right x address
-
-	mov	m,c			;draw the right border cell
-
-	lxi	h,grect$i+offsety	;i.x++
+	lda	grect$i+offsety		;HL.y = i.y
+	mov	l,a
+	lda	grect$end+offsetx	;HL.x = end.x-1 (exclusive)
+	dcr	a
+	mov	h,a
+	dad	d			;HL=cursor+right offset
+	lda	grect$right		;A=right byte
+	mov	m,a			;*(HL)=right byte
+	
+	lxi	h,grect$i+offsety	;i.y++
 	inr	m
 
-	jmp	grect$lrchk		;loop
+	jmp	grect$yloop		;loop yloop
 
-grect$topbtm:			;draw top and bottom
-	lhld	grect$init	;hl=init
-	shld	grect$i		;i=hl
-
-	lda	grect$btop	;a=topvalue
-	mov	b,a		;b=topvalue
-	lda	grect$bbottom	;a=bottomvalue
-	mov	c,a		;c=bottomvalue
-
+grect$ydone:
 	;fall through
-grect$tbchk:
+;grect$xinit:	;draw top and bottom using xloop
+	lhld	grect$start	;i=start
+	shld	grect$i
+
+	;fallthrough
+grect$xloop:
+	lda	grect$i+offsetx		;B=i.x
+	mov	b,a
+	lda	grect$end+offsetx	;A=end.x
+	cmp	b			;if (i.x >= end.x) break
+	jc	grect$xdone
+	jz	grect$xdone
+
+	lhld	cursor			;DE=cursor
+	xchg
 	lhld	grect$i			;HL=i
-	lda	grect$last+offsetx	;A=last.x
-	cmp	h			;while (i.x <= last.x) tbloop
-	jnc	grect$tbloop
-	;tbloop over
-	ret				;return to caller (exit procedure)
+	dad	d			;HL=cursor+i
+	lda	grect$top		;A=top byte
+	mov	m,a			;*(HL)=top byte
 
-grect$tbloop:
-	lxi	d,cursor		;de=cursor
-	dad	d			;hl=cursor + i
-
-	mov	m,b			;draw the top border cell
-
-	lda	grect$last+offsety	;get address of the bottom cell
-	add	e			;get the y address in ref on cursor (de)
-	mov	l,a			;a=bottom y address
-
-	mov	m,c			;draw the bottom border cell
-
+	lda	grect$i+offsetx		;HL.x = i.x
+	mov	h,a
+	lda	grect$end+offsety	;HL.y = end.y-1 (exclusive)
+	dcr	a
+	mov	l,a
+	dad	d			;HL=cursor+bottom offset
+	lda	grect$bottom		;A=bottom byte
+	mov	m,a			;*(HL)=bottom byte
+	
 	lxi	h,grect$i+offsetx	;i.x++
 	inr	m
 
-	jmp	grect$tbchk		;loop
+	jmp	grect$xloop		;loop xloop
+
+grect$xdone:
+	ret
 ;/*}}}*/
 
 
@@ -344,7 +357,7 @@ grect$tbloop:
 cursor		ds	2	;current position in dram
 
 ;struct pixel gmwelcome[]
-gmwelcomelen	equ	2
+gmwelcomelen	equ	4
 gmwelcome:     ;y   x	pixel.data   pixel.mask
 	db	2,  2,	1010$1010B,  0000$0000B
 	db	2,  3,	0101$0101B,  0000$0000B
@@ -362,6 +375,13 @@ tsalt:		DS	2	;salt for random number generation
 genprand:	DS	2	;psudo random number ptrarray
 
 ;byte *memory;
+
+cpmstack:	DS	2
+
+stacksize	equ	1024
+stackstart:	DS	stacksize
+progstack:	equ	$
+
 memory:		equ	$
 
 
