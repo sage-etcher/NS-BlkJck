@@ -18,6 +18,70 @@ pixeldata       equ	00002h	;byte     pixel.data
 pixelmask       equ	00003h	;mask     pixel.mask
 pixelsize	equ	00004h	;sizeof (struct pixel)
 
+;enum cardface {
+;  FACE_TWO   = 0x00   
+;  FACE_THREE = 0x01   
+;  FACE_FOUR  = 0x02   
+;  FACE_FIVE  = 0x03   
+;  FACE_SIX   = 0x04   
+;  FACE_SEVEN = 0x05   
+;  FACE_EIGHT = 0x06   
+;  FACE_NINE  = 0x07   
+;  FACE_JACK  = 0x08   
+;  FACE_QUEEN = 0x09   
+;  FACE_KING  = 0x0A   
+;  FACE_ACE   = 0x0B   
+;}
+FACE_TWO	EQU	000H   
+FACE_THREE	EQU	001H   
+FACE_FOUR 	EQU	002H   
+FACE_FIVE 	EQU	003H   
+FACE_SIX  	EQU	004H   
+FACE_SEVEN	EQU	005H   
+FACE_EIGHT	EQU	006H   
+FACE_NINE 	EQU	007H   
+FACE_JACK 	EQU	008H   
+FACE_QUEEN	EQU	009H   
+FACE_KING 	EQU	00AH   
+FACE_ACE  	EQU	00BH   
+FACE_COUNT	EQU	00CH
+
+;enum cardtype {
+;  TYPE_SPADE   = 0x00
+;  TYPE_HEART   = 0x01
+;  TYPE_CLOVER  = 0x02
+;  TYPE_DIAMOND = 0x03
+;}
+TYPE_SPADE	EQU	000H
+TYPE_HEART	EQU	001H
+TYPE_CLOVER	EQU	002H
+TYPE_DIAMOND	EQU	003H
+TYPE_COUNT	EQU	004H
+
+;struct card {
+;  u8 fipped
+;  u8 face
+;  u8 sign
+;  <u8 padding>		makes multiplying faster '<<2'
+;}
+cardflipped	equ	00000h
+cardface	equ	00001h
+cardsign	equ	00002h
+cardsize	equ	1+1+1+1
+
+;struct hand {
+;  u8  count
+;  u8  hardtotal
+;  u8  softtotal
+;  card *m[maxhandcards]
+;}
+handcount	equ	00000h
+handsoft	equ	00001h
+handhard	equ	00002h
+handm		equ	00003h
+maxhandcards	equ	21	;21 aces is max
+handsize	equ	(2*maxhandcards)+1+1+1
+
 ;in/out register and const values
 ;/*{{{*/
 ctrlreg		equ	0F0h	;output 
@@ -100,6 +164,110 @@ testloop:
 	jnz	testloop
 
 	ret
+
+
+;procedure initdeck (void): deck
+;initialize the deck (unshuffled)
+;side effects:
+;/*{{{*/
+ideck$facei:	DS	1
+ideck$typei:	DS	1
+ideck$decki:	DS	1
+
+initdeck:
+	lxi	h,0
+	shld	deck$index
+
+;deckloop$init:
+	mvi	a,numofdecks
+	sta	ideck$decki
+deckloop$loop:
+	lda	ideck$decki
+	cpi	0
+	jz	deckloop$done
+
+;faceloop$init:
+	mvi	a,FACE_COUNT-1
+	sta	ideck$facei
+faceloop$loop:
+	lda	ideck$facei
+	cpi	0
+	jz	faceloop$done
+;typeloop$init:
+	mvi	a,TYPE_COUNT-1
+	sta	ideck$typei
+typeloop$loop:
+	lda	ideck$typei
+	cpi	0
+	jz	typeloop$done
+
+	;HL=deck[deck$index]
+	lhld	deck$index		;HL=index
+	mov	a,h			;A=highorder byte
+	ani	0011$1111B		;mask off top 2 bits
+	rlc !rlc			;multiply by 4
+	mov	h,a			;temporarily store it
+	mov	a,l			;A=loworder byte
+	rlc !rlc			;multiply by 4 (kinda)
+	mov	l,a			;store temp in L
+	ani	0000$0011B		;masc off all but bottom 2 bits
+	ora	H			;combine with highorder
+	mov	h,a			;new highorder done
+	mov	a,l			;A=temp loworder
+	ani	1111$1100B		;mask off lower 2 trash bits
+	mov	l,a			;store L
+
+	lxi	d,deck			;DE=&deck
+	dad	d			;HL=deck + (index * sizeof (card))
+
+	push	h			;protect HL
+	lxi	d,cardtype		;HL=&deck[index].type
+	dad	d
+	lda	ideck$typei		;A=type
+	mov	m,a			;deck[index].type = type
+	pop	h			;restore HL
+
+	push	h			;protect HL
+	lxi	d,cardface		;HL=&deck[index].face
+	dad	d
+	lda	ideck$facei		;A=type
+	mov	m,a			;deck[index].type = type
+	pop	h			;restore HL
+
+	push	h			;protect HL
+	lxi	d,cardtype		;HL=&deck[index].type
+	dad	d
+	lda	ideck$typei		;A=type
+	mov	m,a			;deck[index].type = type
+	pop	h			;restore HL
+
+
+
+	
+
+
+
+
+	lxi	h,ideck$typei
+	dcr	m
+	jmp	typeloop$loop
+typeloop$done:
+	lxi	h,ideck$facei
+	dcr	m
+	jmp	faceloop$loop
+faceloop$done:
+	lxi	h,ideck$decki
+	dcr	m
+	jmp	deckloop$loop
+deckloop$done:
+
+	ret
+
+	
+
+
+	
+;/*}}}*/
 
 
 ;procedure drawwelcome (void): tsalt
@@ -818,25 +986,17 @@ gmwelcome:     ;y   x	pixel.data   pixel.mask
 	db	2,  2,	1111$0000b,  0000$1111B
 	db	2,  3,	1111$0000b,  0000$0000B
 
-gmcardlen	equ	2
-gmcard:	       ;y   x   pixel.data   pixel.mask
-	db	0,  0,	0111$1111b,  0000$0000B
-	db	1,  0,  1100$0000b,  0000$0000B
-
-; 1 1 1 1 1 0 1 0
-; 1 1 1 1 0 0 0 0
-
-
-;uint16 tsalt;
 tsalt:		DS	2	;salt for random number generation
-
-;byte *genprand;
 genprand:	DS	2	;psudo random number ptrarray
 
-;byte *memory;
+numofdecks	equ	6	;number of decks
+singledecklen	equ	52	;number of cards in 1 deck
+decklen		equ	(singledecklen * numofdecks)
+deck:		DS	decklen * cardsize
+deck$index:	DW	0 
+
 
 cpmstack:	DS	2
-
 stacksize	equ	1024
 stackstart:	DS	stacksize
 progstack:	equ	$
