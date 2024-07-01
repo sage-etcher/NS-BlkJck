@@ -19,6 +19,7 @@ pixelmask       equ	00003h	;mask     pixel.mask
 pixelsize	equ	00004h	;sizeof (struct pixel)
 
 ;in/out register and const values
+;/*{{{*/
 ctrlreg		equ	0F0h	;output 
 statreg1	equ	0E0h	;input
 statreg2	equ	0D0h	;input
@@ -41,11 +42,19 @@ drampage1	equ	1000$0001b	;4kb repeats to fill
 
 prompage0	equ	1000$0100b	;2kb repeats to fill
 
-
 dram	equ	08000h		;start address of dram (in page 2)
 gx	equ	00100h		;move > 1 cell in dram (8px)
 gy	equ	00001h		;move v 1 cell in dram (1px)
+;/*}}}*/
 
+maxwidth	equ	80
+maxheight	equ	240
+
+cardwidth	equ	12
+cardheight	equ	82
+
+deckx	equ	3
+decky	equ	12
 
 ;program start
 tpa	equ	00100h
@@ -55,32 +64,42 @@ init:
 	dad	sp
 	shld	cpmstack	;cpmstack=SP
 	lxi	sp,progstack	;SP=program stack
-start:	
 	call	loaddram	;load dram
+	;call	kbmi$enable	;enable keyboard maskable interupts
 	call	resetscroll	;reset dram scroll
+start:	
+	call	testpage	;draw a test page
 
-	lxi	h,dram		;cursor = (0,0)
-	shld	cursor		;set cursor
-
-	xra	a		;A=0  fill byte
-	lxi	d,00000h	;DE=0000  start offset
-	lxi     h,050FFh	;HL=50FF  end offset (full screen)
-	call	grectf		;clear the screen
-
-	call	drawwelcome	;ret draw the welcome screen
-				;define tsalt from ui
-
-	;done. clean up
-	call	loadmainram	;restore ram (cpm)
-	
-	mvi	c,001h
-	call	0005h
 exit:
+	call	loadmainram	;load mainram
 	lhld	cpmstack	;HL=cpmstack
 	SPHL			;SP=cpmstack
 	rst	0		;warm-boot
 halt:	hlt
 	jmp	halt
+
+
+
+testpage:
+	lxi	h,dram		;cursor = (0,0)
+	shld	cursor		;set cursor
+	call	clearscr	;clear the screen
+	call	drawborder	;draw the table decorations
+
+	lxi	h,dram		;HL=dram
+	mvi	d,deckx		;DE=(deckx,decky)
+	mvi	e,decky
+	dad	d		;HL=dram + deckoffset
+	shld	cursor		;set cursor
+	call	drawcardb	;draw card base
+	call	drawback	;draw the card's background
+
+testloop:
+	call	readkey		;read a key
+	cpi	'Q'		;if (key == 'Q') break
+	jnz	testloop
+
+	ret
 
 
 ;procedure drawwelcome (void): tsalt
@@ -107,6 +126,355 @@ drawwelcome:
 	shld	tsalt		;store the salt
 
 	ret
+;/*}}}*/
+
+
+;procedure command (C=command): statreg1 statreg2
+;wait for the command acknowledgement flag to toggled
+;side effects: A ctrlreg statreg1 statreg2
+;/*{{{*/
+command:
+	push	b		;store bc
+
+	in	statreg2	;get pre status
+	ani	1000$0000B	;mask away trash
+	mov	b,a		;store prestatus in B
+
+	mov	a,c		;a=command	
+	out	ctrlreg		;run command
+
+command$ack:
+	in	statreg2	;get post status
+	ani	1000$0000B	;mask away trash
+	cmp	B		;while (ackflag == preflag) loop
+	jz	command$ack
+
+command$done:
+	pop	b		;restore bc
+	ret			;else return
+;/*}}}*/
+
+
+;procedure kbmi$enable (void): kbmi
+;enable keyboard maskable interupts flag
+;side effects
+;/*{{{*/
+kbmi$enable:
+kbmi$toggle:
+	mvi	c,0001$0011B	;complement keyboard mi flag command
+	call	command		;run command
+	in	statreg1	;get result
+	ani	0000$0001B	;mask away trash
+	cpi	0		;if (kbmi_flag == false) toggle
+	jz	kbmi$toggle
+	ret			;else the flag is true, return
+;/*}}}*/
+
+
+;procedure readkey (void): A=keycode
+;wait for keyboard input, return the first key
+;side effects: hwkeybuf A
+;/*{{{*/
+readkey:
+	;wait keycode
+	in	statreg2	;get keyboard status
+	ani	0100$0000B	;mask away trash
+	cpi	0		;while (keyboard_data_flag == 0) loop
+	jz	readkey
+
+	;read keycode
+	mvi	c,0001$0001B	;get low nibble command
+	call	command		;run command
+	in	statreg2	;get result
+	ani	0000$1111B	;mask away trash
+	mov	b,a		;store low nib in B
+
+	mvi	c,0001$0010B	;get high nibble command
+	call	command		;run command
+	in	statreg2	;get result
+	ani	0000$1111B	;mask away trash
+	rlc !rlc !rlc !rlc	;bit shift high nib into position
+	
+	ora	b		;combine the high and low nibbles
+
+	ret			;return to caller (A=key)
+;/*}}}*/
+
+
+;procedure clearscr (void): dram
+;clears the screen
+;side effects: DE HL B (grectf) dram
+;/*{{{*/
+clearscr:
+	lxi	d,0		;start point
+	mvi	h,maxwidth	;end point
+	mvi	l,maxheight
+	mvi	b,0000$0000B	;mask
+	mvi	a,0000$0000B	;data
+	call	grectf		;clear full screen
+	ret
+;/*}}}*/
+
+
+;procedure drawborder (void): dram
+;draw the board decorations
+;side effects: dram A DE HL (grect)
+;/*{{{*/
+field$left	equ	0011$0000B
+field$right	equ	0000$1100B
+field$mleft	equ	0011$1111B
+field$mright	equ	1111$1100B
+
+drawborder:
+	mvi	a,field$left
+	sta	border$left
+	mvi	a,field$mleft
+	sta	border$mleft
+	mvi	a,field$right
+	sta	border$right
+	mvi	a,field$mright
+	sta	border$mright
+
+	mvi	d,0		;offset_a = (0,1)
+	mvi	e,1
+	mvi	h,maxwidth	;offset_b = (maxwidth,maxheight-1)
+	mvi	l,maxheight-1
+	call	grect
+
+	ret
+;/*}}}*/
+
+
+;procedure drawcardb (void): dram
+;draws the card base
+;side effects: dram
+;/*{{{*/
+cardba$left	equ	1100$0000B	;left  card border A
+cardba$right	equ	0000$0011B	;right card border A
+cardba$mask	equ	1111$1111B	;left/right card mask A
+
+cardbb$left	equ	0000$1000B	;left  card border B
+cardbb$right	equ	0001$0000B	;right card border B
+cardbb$mleft	equ	1100$1111B	;left  card mask B
+cardbb$mright	equ	1111$0011B	;right card mask B
+
+	;this procedure is verry lazily done, and is infentient but it works
+	;should be optimized and "unstupided" later, for now it will suffice
+drawcardb:
+	lxi	d,0		;start offset
+	mvi	h,cardwidth	;stop offset
+	mvi	l,cardheight	
+	xra	A		;data = 0000$0000B
+	mov	b,a		;mask = 0000$0000B
+	call	grectf
+
+	mvi	a,cardba$left
+	sta	border$left
+	mvi	a,cardba$right
+	sta	border$right
+	mvi	a,cardba$mask
+	sta	border$mleft
+	sta	border$mright
+
+	lxi	d,0		;offset_a = (0,0)
+	mvi	h,cardwidth	;offset_b = (cardwidth,cardheight)
+	mvi	l,cardheight
+	call	grect		;draw outer border
+	
+	mvi	a,cardbb$left	;left
+	sta	border$left
+	mvi	a,cardbb$mleft	;left mask
+	sta	border$mleft
+	mvi	a,cardbb$right	;right
+	sta	border$right
+	mvi	a,cardbb$mright	;right mask
+	sta	border$mright
+	
+	mvi	d,0		;offset_a = (0,1)
+	mvi	e,2
+	mvi	h,cardwidth	;offset_b = (cardwidth, cardheight-2)
+	mvi	l,cardheight-2
+	call	grect
+
+	ret
+;/*}}}*/
+
+
+;procedure curleft (A=value): cursor
+;move the cursor to the left
+;side effects:
+;/*{{{*/
+curright:
+	lhld	cursor
+	add	h
+	mov	h,a
+	shld	cursor
+	ret
+curleft:
+	lhld	cursor
+	mov	b,a
+	mov	a,h
+	sub	b
+	mov	h,a
+	shld	cursor
+	ret
+curdown:
+	lhld	cursor
+	add	l
+	mov	l,a
+	shld	cursor
+	ret
+curup:
+	lhld	cursor
+	mov	b,a
+	mov	a,l
+	sub	b
+	mov	l,a
+	shld	cursor
+	ret
+;/*}}}*/
+
+
+;procedure drawback (void): dram
+;draws the back of a card
+;side effects: dram
+;/*{{{*/
+back$offset	equ	0208h
+back$data	equ	1010$1010B
+back$mask	equ	0000$0000B
+
+back$i:			DS	1
+back$j:			DS	1
+back$k:			DS	1
+back$l:			DS	1
+drawback:
+	lhld	cursor
+	push	H
+
+	mvi	a,1
+	call	curright
+	mvi	a,5
+	call	curdown
+
+back$initb:
+	lhld	cursor
+	push	h
+
+	mvi	a,5
+	sta	back$j
+
+back$loopb:
+	lda	back$j
+	cpi	0
+	jz	back$doneb
+
+	;fall through
+back$inita:
+	lhld	cursor
+	push	h
+
+	mvi	a,3
+	sta	back$i
+	
+	;fall through
+back$loopa:
+	lda	back$i	
+	cpi	0
+	jz	back$donea
+
+	lxi	d,0		;offset_a
+	lxi	h,back$offset	;offset_b
+	mvi	a,back$data	;data byte
+	mvi	b,back$mask	;data mask
+	call	grectf		;draw the thing
+
+	mvi	a,4
+	call	curright
+
+	lxi	h,back$i
+	dcr	m
+
+	jmp	back$loopa
+
+back$donea: 
+	pop	h
+	shld	cursor
+	mvi	a,16
+	call	curdown
+
+	lxi	h,back$j
+	dcr	m
+
+	jmp	back$loopb
+
+back$doneb:
+	pop	H
+	shld	cursor
+
+back$initc:
+	mvi	a,2
+	call	curright
+	mvi	a,8
+	call	curdown
+
+	lhld	cursor
+	push	h
+
+	mvi	a,4
+	sta	back$k
+
+back$loopc:
+	lda	back$k
+	cpi	0
+	jz	back$donec
+
+back$initd:
+	lhld	cursor
+	push	h
+
+	mvi	a,2
+	sta	back$l
+
+back$loopd:
+	lda	back$l
+	cpi	0
+	jz	back$doned
+
+	lxi	d,0		;offset_a
+	lxi	h,back$offset	;offset_b
+	mvi	a,back$data	;data byte
+	mvi	b,back$mask	;data mask
+	call	grectf		;draw the thing
+
+	mvi	a,4
+	call	curright
+
+	lxi	h,back$l
+	dcr	m
+
+	jmp	back$loopd
+
+back$doned:
+	pop	h
+	shld	cursor
+	mvi	a,16
+	call	curdown
+
+	lxi	h,back$k
+	dcr	m
+
+	jmp	back$loopc
+
+back$donec:
+	pop	H
+	shld	cursor
+
+	pop	H
+	shld	cursor
+	
+	ret
+	
+	
 ;/*}}}*/
 
 
@@ -197,17 +565,20 @@ gdraw$done:
 ;/*}}}*/
 
 
-;procedure grectf (A=fillbyte, DE=offset_a, HL=offset_b): void
+;procedure grectf (A=fillbyte, B=bitmask, DE=offset_a, HL=offset_b): void
 ;draws a filled rectange from offset_a (top left) to offset_b (bottom right)
 ;side effects: dram[*]
 ;/*{{{*/
 grectf$data:	DS	1
+grectf$mask:	DS	1
 grectf$start:	DS	offsetsize
 grectf$end:	DS	offsetsize
 grectf$i:	DS	offsetsize
 
-grectf:	;A=data  DE=point1  HL=point2
+grectf:	;A=data  B=bitmask  DE=point1  HL=point2
 	sta	grectf$data	;store data
+	mov	a,b		;store mask
+	sta	grectf$mask
 	shld	grectf$end	;store end
 	xchg			;store start
 	shld	grectf$start
@@ -238,12 +609,17 @@ grectf$yloop:
 	jc	grectf$ydone
 	jz	grectf$ydone
 
-	lda	grectf$data		;A=data
 	lhld	cursor			;HL=cursor
 	xchg				;DE=cursor
 	lhld	grectf$i		;HL=i
 	dad	d			;HL=cursor + i
-	mov	m,a			;*(HL)=data
+	mov	b,m			;B=old byte
+	lda	grectf$mask		;A=(old & maks) | data
+	ana	b
+	mov	b,a
+	lda	grectf$data
+	ora	b
+	mov	m,a			;*(HL)=new byte
 
 	lxi	h,grectf$i+offsety	;i.y++
 	inr	m
@@ -269,51 +645,11 @@ grect$start:	DS	offsetsize
 grect$end:	DS	offsetsize
 grect$i:	DS	offsetsize
 
-grect$top:	DB	1111$1111b
-grect$bottom:	DB	1111$1111b
-grect$left:	DB	1000$0000b
-grect$right:	DB	0000$0001b
-
 grect:
 	shld	grect$end	;store end
 	xchg			;stort start
 	shld	grect$start
 
-;grect$yinit:	;draw left and right using yloop
-	lhld	grect$start		;i=start
-	shld	grect$i
-	
-grect$yloop:	
-	lda	grect$i+offsety		;B=i.y
-	mov	b,a
-	lda	grect$end+offsety	;A=end.y
-	cmp	b			;if (i.y >= end.y) break
-	jc	grect$ydone
-	jz	grect$ydone
-
-	lhld	cursor			;DE=cursor
-	xchg
-	lhld	grect$i			;HL=i
-	dad	d			;HL=cursor+i
-	lda	grect$left		;A=left byte
-	mov	m,a			;*(HL)=left byte
-
-	lda	grect$i+offsety		;HL.y = i.y
-	mov	l,a
-	lda	grect$end+offsetx	;HL.x = end.x-1 (exclusive)
-	dcr	a
-	mov	h,a
-	dad	d			;HL=cursor+right offset
-	lda	grect$right		;A=right byte
-	mov	m,a			;*(HL)=right byte
-	
-	lxi	h,grect$i+offsety	;i.y++
-	inr	m
-
-	jmp	grect$yloop		;loop yloop
-
-grect$ydone:
-	;fall through
 ;grect$xinit:	;draw top and bottom using xloop
 	lhld	grect$start	;i=start
 	shld	grect$i
@@ -331,7 +667,12 @@ grect$xloop:
 	xchg
 	lhld	grect$i			;HL=i
 	dad	d			;HL=cursor+i
-	lda	grect$top		;A=top byte
+	mov	a,m			;A=old byte
+	lda	border$mtop		;A=(oldbyte & tmask) | topbyte
+	ana	b
+	mov	b,a
+	lda	border$top
+	ora	b
 	mov	m,a			;*(HL)=top byte
 
 	lda	grect$i+offsetx		;HL.x = i.x
@@ -340,7 +681,12 @@ grect$xloop:
 	dcr	a
 	mov	l,a
 	dad	d			;HL=cursor+bottom offset
-	lda	grect$bottom		;A=bottom byte
+	mov	b,m			;A=oldbyte
+	lda	border$mbottom		;A=(oldbyte & bmask) | bottombyte
+	ana	b
+	mov	b,a
+	lda	border$bottom
+	ora	b
 	mov	m,a			;*(HL)=bottom byte
 	
 	lxi	h,grect$i+offsetx	;i.x++
@@ -349,9 +695,117 @@ grect$xloop:
 	jmp	grect$xloop		;loop xloop
 
 grect$xdone:
+;grect$yinit:	;draw left and right using yloop
+	lhld	grect$start		;i=start
+	shld	grect$i
+	
+	;fall through
+grect$yloop:	
+	lda	grect$i+offsety		;B=i.y
+	mov	b,a
+	lda	grect$end+offsety	;A=end.y
+	cmp	b			;if (i.y >= end.y) break
+	jc	grect$ydone
+	jz	grect$ydone
+
+	lhld	cursor			;DE=cursor
+	xchg
+	lhld	grect$i			;HL=i
+	dad	d			;HL=cursor+i
+	mov	b,m			;A=old byte
+	lda	border$mleft		;A=(oldbyte & lmask) | leftbyte
+	ana	b			
+	mov	b,a
+	lda	border$left
+	ora	b
+	mov	m,a			;*(HL)=new left byte
+
+	lda	grect$i+offsety		;HL.y = i.y
+	mov	l,a
+	lda	grect$end+offsetx	;HL.x = end.x-1 (exclusive)
+	dcr	a
+	mov	h,a
+	dad	d			;HL=cursor+right offset
+	mov	b,m			;A=old byte
+	lda	border$mright		;A=(oldbyte & rmask) | rightbyte
+	ana	b
+	mov	b,a
+	lda	border$right
+	ora	b
+	mov	m,a			;*(HL)=right byte
+	
+	lxi	h,grect$i+offsety	;i.y++
+	inr	m
+
+	jmp	grect$yloop		;loop yloop
+
+grect$ydone:
 	ret
 ;/*}}}*/
 
+
+;procedure gline (A=length, B=fillbyte, C=bitmask, DE=offsetelem, HL=offset): dram
+;draw a line
+;side effects: dram
+;/*{{{*/
+gline$data:	DB	1
+gline$mask:	DB	1
+gline$offset:	DS	offsetsize
+gline$offelem:	DS	offsetsize
+gline$length:	DB	1
+
+gline:	
+	SHLD	gline$offset	;store start offset
+	xchg			;store elem (x or y)
+	shld	gline$offelem
+	STA	gline$length	;store line length
+	mov	A,B		;store fill byte
+	STA	gline$data
+	mov	A,B		;store bit mask 
+	sta	gline$mask
+
+gline$loop:
+	lda	gline$length	;while (not (len == 0)) loop
+	cpi	0
+	jz	gline$done
+
+	lhld	cursor		;HL=cursor+offset
+	xchg
+	lhld	gline$offset
+	dad	d
+
+	mov	b,m		;*HL = (old data & mask) | data
+	lda	gline$mask
+	ana	b
+	mov	b,a
+	lda	gline$data
+	ora	b
+	mov	m,a
+
+	lxi	d,gline$offset	;DE=&offset
+	lhld	gline$offelem	;HL=offsetof(offset.elem)
+	dad	d		;HL=&offset.elem
+	inr	m		;increment the element
+
+	lxi	h,gline$length	;decrement loop counter
+	dcr	m
+
+	jmp	gline$loop	;loop
+
+gline$done:
+	ret
+;/*}}}*/
+	
+
+border$top:	DB	1111$1111b
+border$bottom:	DB	1111$1111b
+border$left:	DB	1000$0000b
+border$right:	DB	0000$0001b
+
+border$mtop:	DB	1111$1111b
+border$mbottom:	DB	1111$1111b
+border$mleft:	DB	1111$1111b
+border$mright:	DB	1111$1111b
 
 ;byte *cursor;
 cursor		ds	2	;current position in dram
@@ -363,6 +817,11 @@ gmwelcome:     ;y   x	pixel.data   pixel.mask
 	db	2,  3,	0101$0101B,  0000$0000B
 	db	2,  2,	1111$0000b,  0000$1111B
 	db	2,  3,	1111$0000b,  0000$0000B
+
+gmcardlen	equ	2
+gmcard:	       ;y   x   pixel.data   pixel.mask
+	db	0,  0,	0111$1111b,  0000$0000B
+	db	1,  0,  1100$0000b,  0000$0000B
 
 ; 1 1 1 1 1 0 1 0
 ; 1 1 1 1 0 0 0 0
