@@ -88,6 +88,12 @@ handhard	equ	00002h
 handm		equ	00003h
 maxhandcards	equ	21	;21 aces is max
 handsize	equ	(2*maxhandcards)+1+1+1
+
+;struct player {
+;  u8  handcount
+;  ha
+;}
+
 ;/*}}}*/
 
 
@@ -1212,12 +1218,13 @@ gmwelcome:     ;y   x	pixel.data   pixel.mask
 ;card sign graphics
 ;/*{{{*/
 ;struct pixel *gmtypearr[4]
-gmtypesize	equ	16
 gmtypearr:
 	dw	gmspade
 	dw	gmheart
 	dw	gmclover
 	dw	gmdiamond
+
+gmtypesize	equ	16
 
 ;struct pixel gmheart[gmtypesize]
 gmheart:
@@ -1292,6 +1299,52 @@ gmclover:
 	db	7,  0,  0000$0011b,  0000$0000b
 	db	7,  1,  1100$0000b,  0000$0000b
 ;/*}}}*/
+
+;card face graphics
+;/*{{{*/
+;struct pixel *gmtypearr[13]
+gmcardfont:
+	dw	gmcardfont$two
+	dw	gmcardfont$three
+	dw	gmcardfont$four
+	dw	gmcardfont$five
+	dw	gmcardfont$six
+	dw	gmcardfont$seven
+	dw	gmcardfont$eight
+	dw	gmcardfont$nine
+	dw	gmcardfont$ten
+	dw	gmcardfont$jack
+	dw	gmcardfont$queen
+	dw	gmcardfont$king
+	dw	gmcardfont$ace
+
+gmfacesize	equ	16
+;/*}}}*/
+
+;font graphics
+;/*{{{*/
+;struct pixel *gmtypearr[13]
+gmfontalpha:
+	dw	gmfont$a,	gmfont$b,	gmfont$c,	gmfont$d
+	dw	gmfont$e,	gmfont$f,	gmfont$g,	gmfont$h
+	dw	gmfont$i,	gmfont$j,	gmfont$k,	gmfont$l
+	dw	gmfont$m,	gmfont$n,	gmfont$o,	gmfont$p
+	dw	gmfont$q,	gmfont$r,	gmfont$s,	gmfont$t
+	dw	gmfont$u,	gmfont$v,	gmfont$w,	gmfont$x
+	dw	gmfont$y,	gmfont$z,	
+
+gmfontextra:
+	dw	gmfont$comma, 	gmfont$period,	gmfont$qmark,	gmfont$bang
+	dw	gmfont$space
+
+gmfontnum:
+	dw	gmfont$zero,	gmfont$one, 	gmfont$two,	gmfont$three
+	dw	gmfont$four,	gmfont$five, 	gmfont$six, 	gmfont$seven
+	dw	gmfont$eight,	gmfont$nine
+
+gmfacesize	equ	16
+;/*}}}*/
+
 
 ;graphics variables
 ;/*{{{*/
