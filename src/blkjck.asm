@@ -1117,7 +1117,6 @@ kbmi$toggle:
 ;/*}}}*/
 
 
-
 ;procedure readkey (void): A=keycode
 ;await 1 key of user input
 ;side effects: AF BC (ctrlreg) (statreg1) (statreg2)
