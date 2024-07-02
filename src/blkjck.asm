@@ -319,7 +319,7 @@ deckloop$done:
 
 ;procedure getdeckindex ([deck], [deck$index]): HL=deck[deck$index]
 ;get the current index of the deck
-;side effects: AF DE DE
+;side effects: AF DE
 ;/*{{{*/
 getdeckindex:
 	;hl=deck[deck$index]
