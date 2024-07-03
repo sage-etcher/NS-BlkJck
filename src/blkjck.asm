@@ -2,27 +2,32 @@
 ;data types (structures and enums)
 ;/*{{{*/
 
-ptrsize		equ	2
 u8size		equ	1
-u16size		equ	1
+u16size		equ	2
+ptrsize		equ	u16size
+charsize	equ	u8size
+
+structbase	equ	00000h
+enumbase	equ	0
+enumiter	equ	1
 
 ;struct offset {
-;  u8 x,
 ;  u8 y,
+;  u8 x,
 ;}
-offsetx		equ	00001h	;x_offset offset.x
-offsety		equ	00000h	;y_offset offset.y
-offsetsize	equ	00002h	;sizeof (struct offset)
+offsety		equ	structbase
+offsetx		equ	u8size + offsety
+offsetsize	equ	u8size + offsetx
 
 ;struct pixel { 
-;  u16 offset, 
-;  u8  data, 
-;  u8  mask 
+;  offset off, 
+;  u8     data, 
+;  u8     mask 
 ;}
-pixeloffset	equ	00000h	;offset   pixel.offset
-pixeldata       equ	00002h	;byte     pixel.data
-pixelmask       equ	00003h	;mask     pixel.mask
-pixelsize	equ	00004h	;sizeof (struct pixel)
+pixeloffset	equ	structbase
+pixeldata	equ	offsetsize + pixeloffset
+pixelmask	equ	u8size     + pixeldata
+pixelsize	equ	u8size	   + pixelmask
 
 ;enum cardface {
 ;  face$two   = 0x00   
@@ -38,20 +43,20 @@ pixelsize	equ	00004h	;sizeof (struct pixel)
 ;  face$king  = 0x0a   
 ;  face$ace   = 0x0b   
 ;}
-face$two	equ	000h   
-face$three	equ	001h   
-face$four 	equ	002h   
-face$five 	equ	003h   
-face$six  	equ	004h   
-face$seven	equ	005h   
-face$eight	equ	006h   
-face$nine 	equ	007h   
-face$ten	equ	008h   
-face$jack 	equ	009h   
-face$queen	equ	00ah   
-face$king 	equ	00bh   
-face$ace  	equ	00ch   
-face$count	equ	00dh
+face$two	equ	enumbase
+face$three	equ	enumiter + face$two
+face$four 	equ	enumiter + face$three
+face$five 	equ	enumiter + face$four
+face$six  	equ	enumiter + face$five
+face$seven	equ	enumiter + face$six
+face$eight	equ	enumiter + face$seven
+face$nine 	equ	enumiter + face$eight
+face$ten	equ	enumiter + face$nine
+face$jack 	equ	enumiter + face$ten
+face$queen	equ	enumiter + face$jack
+face$king 	equ	enumiter + face$queen
+face$ace  	equ	enumiter + face$king
+face$count	equ	enumiter + face$ace
 
 ;enum cardtype {
 ;  type$spade   = 0x00
@@ -59,22 +64,24 @@ face$count	equ	00dh
 ;  type$clover  = 0x02
 ;  type$diamond = 0x03
 ;}
-type$spade	equ	000h
-type$heart	equ	001h
-type$clover	equ	002h
-type$diamond	equ	003h
-type$count	equ	004h
+type$spade	equ	enumbase
+type$heart	equ	enumiter + type$spade
+type$clover	equ	enumiter + type$heart
+type$diamond	equ	enumiter + type$clover
+type$count	equ	enumiter + type$diamond
 
 ;struct card {
 ;  u8 fipped
 ;  u8 face
 ;  u8 sign
-;  <u8 padding>		makes multiplying faster '<<2'
+;  <pad to 32bits/4bytes>	;makes multiplication easier
 ;}
-cardflipped	equ	00000h
-cardface	equ	00001h
-cardsign	equ	00002h
-cardsize	equ	1+1+1+1
+cardflipped	equ	structbase
+cardface	equ	cardflipped + u8size
+cardsign	equ	cardface    + u8size
+cardsize	equ	4
+;if cardsize is too small, asm.com will complain (V error code)
+cardsizechk	equ	cardsize - (cardsign + u8size)
 
 ;struct hand {
 ;  u8  count
@@ -82,17 +89,38 @@ cardsize	equ	1+1+1+1
 ;  u8  softtotal
 ;  card *m[maxhandcards]
 ;}
-handcount	equ	00000h
-handsoft	equ	00001h
-handhard	equ	00002h
-handm		equ	00003h
 maxhandcards	equ	21	;21 aces is max
-handsize	equ	(2*maxhandcards)+1+1+1
+handcount	equ	structbase
+handsoft	equ	handcount + u8size
+handhard	equ	handsoft  + u8size
+handm		equ	handhard  + u16size
+handsize	equ	handm     + (ptrsize*maxhandcards)
+
+
+;struct dealer : hand (-bet);
+maxhandcards	equ	21	;21 aces is max
+dealercount	equ	structbase
+dealersoft	equ	dealercount + u8size
+dealerhard	equ	dealersoft  + u8size
+dealerm		equ	dealerhard  + u8size
+dealersize	equ	dealerm     + (ptrsize*maxhandcards)
+
 
 ;struct player {
-;  u8  handcount
-;  ha
+;  char  name[namelen]
+;  u16   bet
+;  u8    handcount
+;  hand  handarr[handlen]
 ;}
+phandlen	equ	5
+pnamelen	equ	32
+playername	equ	structbase
+playerbet	equ	playername 
+playerhcount	equ	playername    + (charsize*pnamelen)
+playerhandarr	equ	playerhcount  + u8size
+playersize	equ	playerhandarr + (handsize*phandlen)
+
+
 
 ;/*}}}*/
 
@@ -1319,6 +1347,199 @@ gmcardfont:
 	dw	gmcardfont$ace
 
 gmfacesize	equ	16
+
+gmcardfont$two:
+;		x, y, databyte,   bitmask	x, y, databyte,   bitmask
+	db	0, 0, 0000$0111B, 0000$0000B, 	0, 1, 1110$0000B, 0000$0000B
+	db	1, 0, 0000$1000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
+	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$1000B, 0000$0000B
+	db	3, 0, 0000$0000B, 0000$0000B,	3, 1, 0001$0000B, 0000$0000B
+	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 0110$0000B, 0000$0000B
+	db	5, 0, 0000$0001B, 0000$0000B,	5, 1, 1000$0000B, 0000$0000B
+	db	6, 0, 0000$0110B, 0000$0000B,	6, 1, 0000$0000B, 0000$0000B
+	db	7, 0, 0001$1111B, 0000$0000B,	7, 1, 1111$1000B, 0000$0000B
+
+... wwwwwwwwww ...
+... ........w. ...
+... ......ww.. ...
+... ....www... ...
+... .......w.. ...
+... ........w. ...
+... w......w.. ...
+... .wwwwww... ...
+
+gmcardfont$three:
+gmcardfont$four:
+gmcardfont$five:
+gmcardfont$six:
+gmcardfont$seven:
+gmcardfont$eight:
+gmcardfont$nine:
+gmcardfont$ten:
+gmcardfont$jack:
+gmcardfont$queen:
+gmcardfont$king:
+gmcardfont$ace:
+
+;.....wwwwww.....
+;....w......w....
+;...w........w...
+;...........w....
+;.........ww.....
+;.......ww.......
+;.....ww.........
+;...wwwwwwwwww...
+
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+0000 0000 0000 0000
+
+0000 1111 1000 0000
+0000 0000 1000 0000
+0000 0000 1000 0000
+0000 0000 1000 0000
+0000 0000 1000 0000
+0000 0000 1000 0000
+0000 0000 1000 0000
+0000 1111 1111 0000
+
 ;/*}}}*/
 
 ;font graphics
