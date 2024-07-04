@@ -72,15 +72,13 @@ sign$diamond	equ	enumiter + sign$clover
 sign$max	equ	sign$diamond
 
 ;struct card {
-;  u8 fipped
 ;  u8 face
 ;  u8 sign
-;  <pad to 32bits/4bytes>	;makes multiplication easier
+;  <pad to 16bits/2bytes>	;makes multiplication easier
 ;}
-cardflipped	equ	structbase
-cardface	equ	cardflipped + u8size
+cardface	equ	structbase
 cardsign	equ	cardface    + u8size
-cardsize	equ	4
+cardsize	equ	2
 ;if cardsize is too small, asm.com will complain (V error code)
 cardsizechk	equ	cardsize - (cardsign + u8size)
 
@@ -94,12 +92,11 @@ maxhandcards	equ	21	;21 aces is max
 handcount	equ	structbase
 handsoft	equ	handcount + u8size
 handhard	equ	handsoft  + u8size
-handm		equ	handhard  + u16size
+handm		equ	handhard  + u8size
 handsize	equ	handm     + (ptrsize*maxhandcards)
 
 
-;struct dealer : hand (-bet);
-maxhandcards	equ	21	;21 aces is max
+;typedef struct hand dealer;
 dealercount	equ	structbase
 dealersoft	equ	dealercount + u8size
 dealerhard	equ	dealersoft  + u8size
@@ -109,15 +106,17 @@ dealersize	equ	dealerm     + (ptrsize*maxhandcards)
 
 ;struct player {
 ;  char  name[namelen]
+;  u16   score
 ;  u16   bet
 ;  u8    handcount
 ;  hand  handarr[handlen]
 ;}
-phandlen	equ	5
 pnamelen	equ	32
+phandlen	equ	5
 playername	equ	structbase
-playerbet	equ	playername 
-playerhcount	equ	playername    + (charsize*pnamelen)
+playerscore	equ	playername    + (charsize*pnamelen)
+playerbet	equ	playerscore   + u16size
+playerhcount	equ	playerbet     + u16size
 playerhandarr	equ	playerhcount  + u8size
 playersize	equ	playerhandarr + (handsize*phandlen)
 
@@ -163,7 +162,14 @@ cardwidth	equ	12	;96
 cardheight	equ	74	;148
 
 deckoffset	equ	00308h	;(24,16)
+dealerhandoff	equ	01508h
+playerhandoff	equ	01570h
+
 presentoffset	equ	02280h	;(34,128)
+
+nextcardx	equ	6
+overflowcardx	equ	nextcardx/2
+overflowcardy	equ	30
 
 
 ;program start
@@ -177,6 +183,9 @@ init:
 	call	loaddram	;load dram
 	call	resetscroll	;reset dram scroll
 start:	
+	call	initdeck	;initialize the deck (unshuffled)
+	call	initplayer	;initialize the player object
+	call	initdealer	;initialize the dealer
 	call	drawtestpage	;draw a test page
 
 exit:
@@ -198,42 +207,299 @@ halt:	hlt
 ;calls: initdeck
 ;/*{{{*/
 drawtestpage:
-	call	initdeck	;create unshuffled deck
-
+newgame:
+	call	resetdealer
+	call	resetplayer
+	
 	call	clearscr	;clear the screen
 	call	drawborder	;draw the table decorations
 
-	lxi	h,dram+deckoffset
-	shld	cursor		;set cursor
-	call	getdeckindex	;get to card of deck
-	call	displaycard	;display it (default face down)
+	lxi	h,dram+deckoffset	;set cursor
+	shld	cursor
+	call	drawcard$facedown	;draw facedown card
+
+	call	deckdraw	
+	lxi	d,dealer		;draw 2 cards into the dealers hand
+	call	handaddcard
+	call	deckdraw	
+	call	handaddcard
+
+	lxi	d,player+playerhandarr	;draw 2 cards into player hand[0]
+	call	deckdraw	
+	call	handaddcard
+	call	deckdraw	
+	call	handaddcard
+
+	lxi	h,dram+dealerhandoff	;set dealer position
+	shld	cursor
+	call	drawdealerfirst		;draw dealers first hand 1st down
+
+	lxi	h,dram+playerhandoff	;set cursor position
+	shld	cursor
+	lxi	h,player+playerhandarr	;HL=plaer.hand[0]
+	call	drawhand		;draw hand to screen
 
 testpage$loop:
 	call	readkey		;read a key
 	cpi	'q'		;if (key == 'q') break
 	jz	testpage$done
+	
+	cpi	'h'
+	jz	testpage$hit
 
-	lxi	h,dram+presentoffset
-	shld	cursor
-	call	getdeckindex	;get the top card of deck
-	call	flipcard	;flip it face up
-	call	displaycard	;and display it
+	cpi	'd'
+	jz	testpage$double
 
-	xra	a		;if at bottom of deck, exit
-	lhld	deck$index	;otherwise decrement deck$index
-	cmp	h
-	jnz	testpage$dec
-	cmp	l
-	jnz	testpage$dec
-	jmp	testpage$done	
-testpage$dec:
-	dcx	h
-	shld	deck$index
-
+	cpi	's'
+	jz	testpage$stand
+	
 	jmp	testpage$loop	;and wait for next key
+
+testpage$hit:
+	lxi	d,player+playerhandarr	;player hits and draws
+	call	deckdraw	
+	call	handaddcard
+
+	lxi	h,dram+playerhandoff	;set cursor position
+	shld	cursor
+	lxi	h,player+playerhandarr	;HL=plaer.hand[0]
+	call	drawhand		;draw hand to screen
+	
+	jmp	testpage$loop
+
+testpage$double:
+	lxi	d,player+playerhandarr	;player doubles and draws 1 card
+	call	deckdraw	
+	call	handaddcard
+
+	lxi	h,dram+playerhandoff	;set cursor position
+	shld	cursor
+	lxi	h,player+playerhandarr	;HL=plaer.hand[0]
+	call	drawhand		;draw hand to screen
+	
+	jmp	testpage$stand
+
+testpage$stand:
+	lxi	d,dealer		;dealer always draws
+	call	deckdraw	
+	call	handaddcard
+
+	lxi	h,dram+dealerhandoff	;set cursor position
+	shld	cursor
+	lxi	h,dealer		;HL=dealer
+	call	drawhand		;draw hand to screen
+	
+	call	readkey		;read a key
+
+	jmp	newgame
+	
 
 testpage$done:
 	ret
+
+
+hac$phand:	DS	ptrsize
+hac$pcard:	DS	ptrsize
+handaddcard:
+	;DE=hand
+	;HL=cardptr
+	shld	hac$pcard	;store card ptr
+	xchg			;store hand ptr
+	shld	hac$phand
+
+	lhld	hac$phand	;HL=handptr->count
+	lxi	d,handcount
+	dad	d
+	mov	A,M		;A=count
+
+	cpi	maxhandcards+1	;if (handptr->count >= maxhandcards+1)
+	jnc	hac$panic	;  panic, cannot add card, hand full
+
+	push	H		;store &handptr->count
+
+	lhld	hac$phand	;HL=handptr->m[handptr->count]
+	lxi	d,handm
+	dad	d
+	xchg
+	mov	l,a		;A is still loaded from precheck
+	mvi	h,0
+	dad	h
+	dad	d
+
+	xchg			;DE=handiter	
+	lhld	hac$pcard	;HL=cardptr
+	xchg			;HL=handiter  DE=cardptr
+	
+	mov	m,e		;store loworder byte (little endian)
+	inx	h
+	mov	m,d		;store highorder byte
+	inx	h
+
+	pop	H		;HL=&handptr->count
+	inr	m		;handptr->count++
+
+hac$panic:
+	lhld	hac$phand	;restore hand pointer to DE
+	xchg
+	ret
+
+ddfirst$savecur:	DS	offsetsize
+drawdealerfirst:
+	;[cursor]
+	lhld	cursor			;store the cursor
+	shld	ddfirst$savecur
+	
+	lda	dealer+dealercount	;A = dealer->count
+	cpi	2			;if (2 > A)
+	jc	ddfirst$panic		;  panic, too few cards
+	
+	lhld	ddfirst$savecur		;HL=cursor position
+	mov	a,h
+	adi	nextcardx
+	mov	h,a
+	shld	cursor
+	call	drawcard$facedown
+
+	lhld	ddfirst$savecur		;HL=cursor position
+	shld	cursor
+	lhld	dealer+dealerm+(1*cardsize)	
+	call	drawcard$faceup
+
+	lhld	ddfirst$savecur		;restore cursor
+	shld	cursor
+
+ddfirst$panic
+	;draw dealers first hand, card[0] face down, card[1] face up
+	ret
+
+drawhand$savecur:	ds	offsetsize
+drawhand$handptr:	ds	ptrsize
+drawhand$iter:		ds	ptrsize
+drawhand$i:		ds	u8size
+
+drawhand:
+	;[cursor]
+	;HL=hand
+	shld	drawhand$handptr
+	lhld	cursor
+	shld	drawhand$savecur
+
+	lhld	drawhand$handptr
+	lxi	d,handm
+	dad	d
+	shld	drawhand$iter
+
+	lhld	drawhand$handptr	
+	lxi	d,handcount
+	dad	d
+	mov	a,m
+	sta	drawhand$i
+
+drawhand$loop:
+	lxi	h,drawhand$i
+	mov	a,m	
+	cpi	0
+	jz	drawhand$done
+	dcr	m
+
+	lhld	drawhand$iter
+	mov	e,m
+	inx	h
+	mov	d,m
+	xchg
+	call	drawcard$faceup
+
+	lhld	drawhand$iter
+	lxi	d,ptrsize
+	dad	d
+	shld	drawhand$iter
+
+	lhld	cursor
+	mov	a,h	
+	mov	b,h
+	adi	nextcardx
+	mov	h,a
+	shld	cursor
+
+	lxi	d,dram
+	mov	a,d
+	adi	maxwidth-cardwidth-1
+	cmp	h
+	cc	drawhand$overflow
+
+	jmp	drawhand$loop
+
+drawhand$overflow:
+	lhld	drawhand$savecur
+
+	mov	a,h
+	adi	overflowcardx	
+	mov	h,a
+
+	mov	a,l
+	adi	overflowcardy
+	mov	l,a
+
+	shld	cursor
+
+	ret
+
+drawhand$done:
+	lhld	drawhand$savecur
+	shld	cursor
+
+	ret
+
+deckshuffle:
+	;idk howwww
+	ret
+
+initplayer:
+	;player.score = 1000
+	lxi	h,1000
+	shld	player+playerscore
+
+	;player.bet = 0
+	lxi	h,0
+	shld	player+playerbet
+
+	;player.name = 0
+	xra	a
+	sta	player+playername
+
+	;player.handarr[0].count = 0
+	;player.handarr[0].soft = 0
+	;player.handarr[0].hard = 0
+	sta	player+playerhandarr+(0*handsize)+handcount
+	sta	player+playerhandarr+(0*handsize)+handsoft
+	sta	player+playerhandarr+(0*handsize)+handhard
+	
+	;player.handcount = 1
+	inr	a
+	sta	player+playerhcount
+
+	ret
+
+resetplayer:
+	xra	a
+	sta	player+playerhandarr+(0*handsize)+handcount
+	sta	player+playerhandarr+(0*handsize)+handsoft
+	sta	player+playerhandarr+(0*handsize)+handhard
+	
+	;player.handcount = 1
+	inr	a
+	sta	player+playerhcount
+
+	ret
+
+resetdealer:
+initdealer:
+	xra	a
+	sta	dealer+dealercount
+	sta	dealer+dealersoft
+	sta	dealer+dealerhard
+	ret
+
 ;/*}}}*/
 
 
@@ -299,13 +565,6 @@ faceloop$loop:
 	call	getdeckindex		;HL=&deck[index]
 
 	push	h
-	lxi	d,cardflipped
-	dad	d
-	mvi	a,0			;A = false
-	mov	m,a			;deck_iter->flipped = false
-	pop	h
-
-	push	h
 	lxi	d,cardface
 	dad	d
 	lda	ideck$facei		;A=face
@@ -349,6 +608,7 @@ deckloop$done:
 	lhld	deck$index
 	dcx	h
 	shld	deck$index
+	shld	deck$top
 	ret
 ;/*}}}*/
 
@@ -360,89 +620,68 @@ deckloop$done:
 getdeckindex:
 	;hl=deck[deck$index]
 	lhld	deck$index		;hl=index
-	mov	a,h			;a=highorder byte
-	ani	0011$1111b		;mask off top 2 bits
-	rlc !rlc			;multiply by 4
-	mov	h,a			;temporarily store it
-	mov	a,l			;a=loworder byte
-	rlc !rlc			;multiply by 4 (kinda)
-	mov	l,a			;store temp in l
-	ani	0000$0011b		;masc off all but bottom 2 bits
-	ora	h			;combine with highorder
-	mov	h,a			;new highorder done
-	mov	a,l			;a=temp loworder
-	ani	1111$1100b		;mask off lower 2 trash bits
-	mov	l,a			;store l
+	dad	h			;hl=index * 2<sizeof card>
 	lxi	d,deck			;de=&deck
-	dad	d			;hl=deck + (index * sizeof (card))
+	dad	d			;hl=&deck[index]
 	ret
 ;/*}}}*/
 
 
-;procedure flipcard (HL=cardptr): A=flippedvalue [cardptr->flipped]
-;flip the card
-;side effects: AF DE [cardptr->flipped]
-;/*{{{*/
-flipcard:
-	push	h		;protect cardptr
+deckdraw:
+	push	d
+	call	getdeckindex	;get to card of deck
+	push	h		;store the card_ptr
 
-	lxi	d,cardflipped	;A=cardptr->flipped
-	dad	d
-	mov	a,m
-	
-	ani	0000$0001B	;ensure that the element is clean
-	xri	0000$0001B	;toggle bit 0 (exclusive or)
-	
-	mov	m,a		;cardptr->flipped = new flipp status
+	;reshuffle when deck empty
+	xra	a		;A=0
+	lhld	deck$index	;HL=index
+	cmp	h		;if (index == 0) shuffle
+	jnz	deckdraw$continue
+	cmp	l
+	jnz	deckdraw$continue
+	call	deckshuffle
+deckdraw$continue:	
+	lhld	deck$index	;pop card off deck
+	dcx	h
+	shld	deck$index
 
-	pop	h		;restore cardptr in HL
+	pop	h
+	pop	d
 	ret
-;/*}}}*/
 
 
-;proceure displaycard (HL=cardptr, [cursor]): <display>
-;draws a card flipped or unflipped dependingly at cursor
-;side effects: AF DE [dram] [dc$cardptr]
-;calls: drawcardb, drawback, drawflipcard
-;/*{{{*/
-dc$cardptr:	DS	ptrsize
-displaycard:
-	shld	dc$cardptr	;store the card
-	lhld	cursor		;store a copy of the cursor
-	push	h
+drawcard$cardptr:	DS	ptrsize
+drawcard$faceup:
+	shld	drawcard$cardptr
+	lhld	cursor		;store the cardpos
+	push	H
 
-	lhld	dc$cardptr
-	call	drawcardb	;draw card base
+	lhld	drawcard$cardptr	
+	call	drawcardb	;draw border
+	call	drawflipcard	;draw card details
 
-	lhld	dc$cardptr	;A=cardptr->flipped
-	lxi	d,cardflipped	
-	dad	d
-	mov	a,m
-	
-	cpi	0		;if (cardptr->flipped == FALSE)
-	jz	display$down
-	jmp	display$up	;else
-	
-display$down:
-	call	drawback	;draw back of card
-	jmp	display$continue
-
-display$up:
-	lhld	dc$cardptr	;draw front of card
-	call	drawflipcard
-	jmp	display$continue
-
-display$continue:
-	pop	h		;restore the initial cursor
+	pop	H		;cursor=card position
 	shld	cursor
-	lhld	dc$cardptr	;restore HL
-	ret	
-;/*}}}*/
+	lhld	drawcard$cardptr
+	ret
+
+drawcard$facedown:
+	push	H
+	lhld	cursor		;store the cardpos
+	push	H
+
+	call	drawcardb	;draw border
+	call	drawback	;draw back of card
+
+	pop	H
+	shld	cursor
+	pop	H
+	ret
 
 
 ;procedure drawcardb ([cursor]): <display>
 ;draws the card base
-;side effects: AF B DE HL [dram] [border$left] [border$mleft] [border$right] \
+;side effects: AF B DE [dram] [border$left] [border$mleft] [border$right] \
 ;              [border$mright]
 ;calls: grectf, grect
 ;/*{{{*/
@@ -458,6 +697,7 @@ cardbb$mright	equ	1111$0011b	;right card mask b
 	;this procedure is verry lazily done, and is infentient but it works
 	;should be optimized and "unstupided" later, for now it will suffice
 drawcardb:
+	push	H
 	lxi	d,0		;start offset
 	mvi	h,cardwidth	;stop offset
 	mvi	l,cardheight	
@@ -493,6 +733,7 @@ drawcardb:
 	mvi	l,cardheight-2
 	call	grect
 
+	pop	h
 	ret
 ;/*}}}*/
 
@@ -1253,6 +1494,13 @@ singledecklen	equ	52	;number of cards in 1 deck
 decklen		equ	(singledecklen * numofdecks)
 deck:		ds	decklen * cardsize
 deck$index:	dw	0 
+deck$top:	dw	0 
+
+;player data section
+player:		ds	playersize
+
+;dealer data section
+dealer:		ds	dealersize
 
 
 ;welcome screen graphics
@@ -1488,7 +1736,7 @@ gmcardfont$jack:
 ;/*}}}*/
 
 ;font graphics
-;/*{{{*/
+;/*{{{*
 ;struct pixel *gmsignarr[13]
 ;gmfontalpha:
 ;	dw	gmfont$a,	gmfont$b,	gmfont$c,	gmfont$d
