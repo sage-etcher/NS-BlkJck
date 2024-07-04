@@ -1,22 +1,34 @@
 
 
+;data types (structures and enums)
+;/*{{{*/
+
+u8size		equ	1
+u16size		equ	2
+ptrsize		equ	u16size
+charsize	equ	u8size
+
+structbase	equ	00000h
+enumbase	equ	0
+enumiter	equ	1
+
 ;struct offset {
-;  u8 x,
 ;  u8 y,
+;  u8 x,
 ;}
-offsetx		equ	00001h	;x_offset offset.x
-offsety		equ	00000h	;y_offset offset.y
-offsetsize	equ	00002h	;sizeof (struct offset)
+offsety		equ	structbase
+offsetx		equ	u8size + offsety
+offsetsize	equ	u8size + offsetx
 
 ;struct pixel { 
-;  u16 offset, 
-;  u8  data, 
-;  u8  mask 
+;  offset off, 
+;  u8     data, 
+;  u8     mask 
 ;}
-pixeloffset	equ	00000h	;offset   pixel.offset
-pixeldata       equ	00002h	;byte     pixel.data
-pixelmask       equ	00003h	;mask     pixel.mask
-pixelsize	equ	00004h	;sizeof (struct pixel)
+pixeloffset	equ	structbase
+pixeldata	equ	offsetsize + pixeloffset
+pixelmask	equ	u8size     + pixeldata
+pixelsize	equ	u8size	   + pixelmask
 
 ;enum cardface {
 ;  face$two   = 0x00   
@@ -32,42 +44,45 @@ pixelsize	equ	00004h	;sizeof (struct pixel)
 ;  face$king  = 0x0a   
 ;  face$ace   = 0x0b   
 ;}
-face$two	equ	000h   
-face$three	equ	001h   
-face$four 	equ	002h   
-face$five 	equ	003h   
-face$six  	equ	004h   
-face$seven	equ	005h   
-face$eight	equ	006h   
-face$nine 	equ	007h   
-face$jack 	equ	008h   
-face$queen	equ	009h   
-face$king 	equ	00ah   
-face$ace  	equ	00bh   
-face$count	equ	00ch
+face$two	equ	enumbase
+face$three	equ	enumiter + face$two
+face$four 	equ	enumiter + face$three
+face$five 	equ	enumiter + face$four
+face$six  	equ	enumiter + face$five
+face$seven	equ	enumiter + face$six
+face$eight	equ	enumiter + face$seven
+face$nine 	equ	enumiter + face$eight
+face$ten	equ	enumiter + face$nine
+face$jack 	equ	enumiter + face$ten
+face$queen	equ	enumiter + face$jack
+face$king 	equ	enumiter + face$queen
+face$ace  	equ	enumiter + face$king
+face$max	equ	face$ace
 
-;enum cardtype {
-;  type$spade   = 0x00
-;  type$heart   = 0x01
-;  type$clover  = 0x02
-;  type$diamond = 0x03
+;enum cardsign {
+;  sign$spade   = 0x00
+;  sign$heart   = 0x01
+;  sign$clover  = 0x02
+;  sign$diamond = 0x03
 ;}
-type$spade	equ	000h
-type$heart	equ	001h
-type$clover	equ	002h
-type$diamond	equ	003h
-type$count	equ	004h
+sign$spade	equ	enumbase
+sign$heart	equ	enumiter + sign$spade
+sign$clover	equ	enumiter + sign$heart
+sign$diamond	equ	enumiter + sign$clover
+sign$max	equ	sign$diamond
 
 ;struct card {
 ;  u8 fipped
 ;  u8 face
 ;  u8 sign
-;  <u8 padding>		makes multiplying faster '<<2'
+;  <pad to 32bits/4bytes>	;makes multiplication easier
 ;}
-cardflipped	equ	00000h
-cardface	equ	00001h
-cardsign	equ	00002h
-cardsize	equ	1+1+1+1
+cardflipped	equ	structbase
+cardface	equ	cardflipped + u8size
+cardsign	equ	cardface    + u8size
+cardsize	equ	4
+;if cardsize is too small, asm.com will complain (V error code)
+cardsizechk	equ	cardsize - (cardsign + u8size)
 
 ;struct hand {
 ;  u8  count
@@ -75,12 +90,41 @@ cardsize	equ	1+1+1+1
 ;  u8  softtotal
 ;  card *m[maxhandcards]
 ;}
-handcount	equ	00000h
-handsoft	equ	00001h
-handhard	equ	00002h
-handm		equ	00003h
 maxhandcards	equ	21	;21 aces is max
-handsize	equ	(2*maxhandcards)+1+1+1
+handcount	equ	structbase
+handsoft	equ	handcount + u8size
+handhard	equ	handsoft  + u8size
+handm		equ	handhard  + u16size
+handsize	equ	handm     + (ptrsize*maxhandcards)
+
+
+;struct dealer : hand (-bet);
+maxhandcards	equ	21	;21 aces is max
+dealercount	equ	structbase
+dealersoft	equ	dealercount + u8size
+dealerhard	equ	dealersoft  + u8size
+dealerm		equ	dealerhard  + u8size
+dealersize	equ	dealerm     + (ptrsize*maxhandcards)
+
+
+;struct player {
+;  char  name[namelen]
+;  u16   bet
+;  u8    handcount
+;  hand  handarr[handlen]
+;}
+phandlen	equ	5
+pnamelen	equ	32
+playername	equ	structbase
+playerbet	equ	playername 
+playerhcount	equ	playername    + (charsize*pnamelen)
+playerhandarr	equ	playerhcount  + u8size
+playersize	equ	playerhandarr + (handsize*phandlen)
+
+
+
+;/*}}}*/
+
 
 ;in/out register and const values
 ;/*{{{*/
@@ -111,14 +155,15 @@ gx	equ	00100h		;move > 1 cell in dram (8px)
 gy	equ	00001h		;move v 1 cell in dram (1px)
 ;/*}}}*/
 
-maxwidth	equ	80
-maxheight	equ	240
+				;visibly if were 1:1
+maxwidth	equ	80	;640
+maxheight	equ	240	;480
 
-cardwidth	equ	12
-cardheight	equ	74
+cardwidth	equ	12	;96
+cardheight	equ	74	;148
 
-deckoffset	equ	00308h
-presentoffset	equ	02280h
+deckoffset	equ	00308h	;(24,16)
+presentoffset	equ	02280h	;(34,128)
 
 
 ;program start
@@ -132,9 +177,7 @@ init:
 	call	loaddram	;load dram
 	call	resetscroll	;reset dram scroll
 start:	
-	call	initdeck	;create unshuffled deck
-	call	testpage	;draw a test page
-
+	call	drawtestpage	;draw a test page
 
 exit:
 	call	clearscr	;clear screen
@@ -146,189 +189,50 @@ halt:	hlt
 	jmp	halt
 
 
+;main procedures
+;/*{{{*/
 
-testpage:
+;procedure drawtestpage (void): 
+;draw page for testing
+;side effects: Assume ALL
+;calls: initdeck
+;/*{{{*/
+drawtestpage:
+	call	initdeck	;create unshuffled deck
+
 	call	clearscr	;clear the screen
 	call	drawborder	;draw the table decorations
 
 	lxi	h,dram+deckoffset
 	shld	cursor		;set cursor
-	call	drawcardb	;draw card base
-	call	drawback	;draw the card's background
+	call	getdeckindex	;get to card of deck
+	call	displaycard	;display it (default face down)
 
-testloop:
+testpage$loop:
 	call	readkey		;read a key
 	cpi	'q'		;if (key == 'q') break
-	jz	testdone
+	jz	testpage$done
 
 	lxi	h,dram+presentoffset
 	shld	cursor
-	call	drawcardb	;draw card base
-	call	getdeckindex
-	call	drawcarddata
+	call	getdeckindex	;get the top card of deck
+	call	flipcard	;flip it face up
+	call	displaycard	;and display it
 
-	xra	a
-	lhld	deck$index
+	xra	a		;if at bottom of deck, exit
+	lhld	deck$index	;otherwise decrement deck$index
 	cmp	h
-	jnz	testskip
+	jnz	testpage$dec
 	cmp	l
-	jnz	testskip
-	jmp	testdone	
-testskip:
+	jnz	testpage$dec
+	jmp	testpage$done	
+testpage$dec:
 	dcx	h
 	shld	deck$index
 
-	jmp	testloop
+	jmp	testpage$loop	;and wait for next key
 
-testdone:
-	ret
-
-
-savecursor:	DS	2
-drawcarddata:
-	push	h
-	lhld	cursor
-	shld	savecursor
-	mvi	a,1
-	call	curright
-	mvi	a,6
-	call	curdown
-	pop	h
-	call	drawsign
-	
-	push	h
-	lhld	savecursor
-	shld	cursor
-	mvi	a,cardwidth-3
-	call	curright
-	mvi	a,cardheight-14
-	call	curdown
-	pop	h
-	call	drawsign
-
-	ret
-
-drawsign:
-	push	h
-	lxi	d,cardsign
-	dad	d
-	mov	l,m
-	mvi	h,0
-	dad	h
-	lxi	d,gmtypearr
-	dad	d
-	mov	e,m
-	inx	h
-	mov	d,m
-	xchg
-	lxi	d,gmtypesize
-	call	gdraw
-	pop	h
-	ret
-
-
-;procedure initdeck (void): deck
-;initialize the deck (unshuffled)
-;side effects:
-;/*{{{*/
-ideck$facei:	ds	1
-ideck$typei:	ds	1
-ideck$decki:	ds	1
-
-initdeck:
-	lxi	h,0
-	shld	deck$index
-
-;deckloop$init:
-	mvi	a,numofdecks
-	sta	ideck$decki
-deckloop$loop:
-	lda	ideck$decki
-	cpi	0
-	jz	deckloop$done
-
-;faceloop$init:
-	mvi	a,face$count-1
-	sta	ideck$facei
-faceloop$loop:
-;typeloop$init:
-	mvi	a,type$count-1
-	sta	ideck$typei
-typeloop$loop:
-	call	getdeckindex		;HL=&deck[index]
-
-	push	h
-	lxi	d,cardflipped
-	dad	d
-	mvi	a,0			;A = false
-	mov	m,a			;deck_iter->flipped = false
-	pop	h
-
-	push	h
-	lxi	d,cardface
-	dad	d
-	lda	ideck$facei		;A=face
-	mov	m,a			;deck_iter->face = face
-	pop	h
-
-	push	h
-	lxi	d,cardsign
-	dad	d
-	lda	ideck$typei		;A=type
-	mov	m,a			;deck_iter->type = type
-	pop	h
-
-	lhld	deck$index
-	inx	h
-	shld	deck$index
-
-	lxi	h,ideck$typei
-	mov	a,m
-	cpi	0
-	jz	typeloop$done
-	dcr	m
-	jmp	typeloop$loop
-typeloop$done:
-	lxi	h,ideck$facei
-	mov	a,m
-	cpi	0
-	jz	faceloop$done
-	dcr	m
-	jmp	faceloop$loop
-faceloop$done:
-	lxi	h,ideck$decki
-	dcr	m
-	jmp	deckloop$loop
-deckloop$done:
-	lhld	deck$index
-	dcx	h
-	shld	deck$index
-	ret
-;/*}}}*/
-
-
-;procedure getdeckindex (deck$index): HL=&deckiter
-;get the current index of the deck
-;side effects: 
-;/*{{{*/
-getdeckindex:
-	;hl=deck[deck$index]
-	lhld	deck$index		;hl=index
-	mov	a,h			;a=highorder byte
-	ani	0011$1111b		;mask off top 2 bits
-	rlc !rlc			;multiply by 4
-	mov	h,a			;temporarily store it
-	mov	a,l			;a=loworder byte
-	rlc !rlc			;multiply by 4 (kinda)
-	mov	l,a			;store temp in l
-	ani	0000$0011b		;masc off all but bottom 2 bits
-	ora	h			;combine with highorder
-	mov	h,a			;new highorder done
-	mov	a,l			;a=temp loworder
-	ani	1111$1100b		;mask off lower 2 trash bits
-	mov	l,a			;store l
-	lxi	d,deck			;de=&deck
-	dad	d			;hl=deck + (index * sizeof (card))
+testpage$done:
 	ret
 ;/*}}}*/
 
@@ -360,129 +264,187 @@ drawwelcome:
 ;/*}}}*/
 
 
-;procedure command (c=command): statreg1 statreg2
-;wait for the command acknowledgement flag to toggled
-;side effects: a ctrlreg statreg1 statreg2
-;/*{{{*/
-command:
-	push	b		;store bc
-
-	in	statreg2	;get pre status
-	ani	1000$0000b	;mask away trash
-	mov	b,a		;store prestatus in b
-
-	mov	a,c		;a=command	
-	out	ctrlreg		;run command
-
-command$ack:
-	in	statreg2	;get post status
-	ani	1000$0000b	;mask away trash
-	cmp	b		;while (ackflag == preflag) loop
-	jz	command$ack
-
-command$done:
-	pop	b		;restore bc
-	ret			;else return
 ;/*}}}*/
 
 
-;procedure kbmi$enable (void): kbmi
-;enable keyboard maskable interupts flag
-;side effects
+;helper procs
 ;/*{{{*/
-kbmi$enable:
-kbmi$toggle:
-	mvi	c,0000$0011b	;complement keyboard mi flag command
-	call	command		;run command
-	in	statreg1	;get result
-	ani	0000$0001b	;mask away trash
-	cpi	0		;if (kbmi_flag == false) toggle
-	jz	kbmi$toggle
-	ret			;else the flag is true, return
+
+;procedure initdeck (void): [deck] HL=[deck$index]
+;initialize the deck (unshuffled)
+;side effects: AF DE HL [deck] [deck$index] [ideck$facei] [ideck$signi] \
+;              [ideck$decki]
+;calls: getdeckindex
+;/*{{{*/
+ideck$facei:	ds	1
+ideck$signi:	ds	1
+ideck$decki:	ds	1
+
+initdeck:
+	lxi	h,0
+	shld	deck$index
+
+;deckloop$init:
+	mvi	a,numofdecks
+	sta	ideck$decki
+deckloop$loop:
+;signloop$init:
+	mvi	a,sign$max
+	sta	ideck$signi
+signloop$loop:
+;faceloop$init:
+	mvi	a,face$max
+	sta	ideck$facei
+faceloop$loop:
+	call	getdeckindex		;HL=&deck[index]
+
+	push	h
+	lxi	d,cardflipped
+	dad	d
+	mvi	a,0			;A = false
+	mov	m,a			;deck_iter->flipped = false
+	pop	h
+
+	push	h
+	lxi	d,cardface
+	dad	d
+	lda	ideck$facei		;A=face
+	mov	m,a			;deck_iter->face = face
+	pop	h
+
+	push	h
+	lxi	d,cardsign
+	dad	d
+	lda	ideck$signi		;A=sign
+	mov	m,a			;deck_iter->sign = sign
+	pop	h
+
+	lhld	deck$index
+	inx	h
+	shld	deck$index
+
+	lxi	h,ideck$facei
+	mov	a,m
+	cpi	0
+	jz	faceloop$done
+	dcr	m
+	jmp	faceloop$loop
+faceloop$done:
+signloop$continue:
+	lxi	h,ideck$signi
+	mov	a,m
+	cpi	0
+	jz	signloop$done
+	dcr	m
+	jmp	signloop$loop
+signloop$done:
+deckloop$continue:
+	lxi	h,ideck$decki
+	dcr	m
+	mov	a,m
+	cpi	0
+	jz	deckloop$done
+	jmp	deckloop$loop
+deckloop$done:
+	lhld	deck$index
+	dcx	h
+	shld	deck$index
+	ret
 ;/*}}}*/
 
 
-;procedure readkey (void): a=keycode
-;wait for keyboard input, return the first key
-;side effects: hwkeybuf a
+;procedure getdeckindex ([deck], [deck$index]): HL=deck[deck$index]
+;get the current index of the deck
+;side effects: AF DE
 ;/*{{{*/
-readkey:
-	;wait keycode
-	call	kbmi$enable	;make sure maskable interupts are enabled
-readkey$loop:
-	in	statreg2	;get keyboard status
-	ani	0100$0000b	;mask away trash
-	cpi	0		;while (keyboard_data_flag == 0) loop
-	jz	readkey$loop
+getdeckindex:
+	;hl=deck[deck$index]
+	lhld	deck$index		;hl=index
+	mov	a,h			;a=highorder byte
+	ani	0011$1111b		;mask off top 2 bits
+	rlc !rlc			;multiply by 4
+	mov	h,a			;temporarily store it
+	mov	a,l			;a=loworder byte
+	rlc !rlc			;multiply by 4 (kinda)
+	mov	l,a			;store temp in l
+	ani	0000$0011b		;masc off all but bottom 2 bits
+	ora	h			;combine with highorder
+	mov	h,a			;new highorder done
+	mov	a,l			;a=temp loworder
+	ani	1111$1100b		;mask off lower 2 trash bits
+	mov	l,a			;store l
+	lxi	d,deck			;de=&deck
+	dad	d			;hl=deck + (index * sizeof (card))
+	ret
+;/*}}}*/
 
-	;read keycode
-	mvi	c,0000$0001b	;get low nibble command
-	call	command		;run command
-	in	statreg2	;get result
-	ani	0000$1111b	;mask away trash
-	mov	b,a		;store low nib in b
 
-	mvi	c,0000$0010b	;get high nibble command
-	call	command		;run command
-	in	statreg2	;get result
-	ani	0000$1111b	;mask away trash
-	rlc !rlc !rlc !rlc	;bit shift high nib into position
+;procedure flipcard (HL=cardptr): A=flippedvalue [cardptr->flipped]
+;flip the card
+;side effects: AF DE [cardptr->flipped]
+;/*{{{*/
+flipcard:
+	push	h		;protect cardptr
+
+	lxi	d,cardflipped	;A=cardptr->flipped
+	dad	d
+	mov	a,m
 	
-	ora	b		;combine the high and low nibbles
+	ani	0000$0001B	;ensure that the element is clean
+	xri	0000$0001B	;toggle bit 0 (exclusive or)
+	
+	mov	m,a		;cardptr->flipped = new flipp status
 
-	ret			;return to caller (a=key)
+	pop	h		;restore cardptr in HL
+	ret
 ;/*}}}*/
 
 
-;procedure clearscr (void): dram
-;clears the screen
-;side effects: de hl b (grectf) dram
+;proceure displaycard (HL=cardptr, [cursor]): <display>
+;draws a card flipped or unflipped dependingly at cursor
+;side effects: AF DE [dram] [dc$cardptr]
+;calls: drawcardb, drawback, drawflipcard
 ;/*{{{*/
-clearscr:
-	lxi	h,dram
+dc$cardptr:	DS	ptrsize
+displaycard:
+	shld	dc$cardptr	;store the card
+	lhld	cursor		;store a copy of the cursor
+	push	h
+
+	lhld	dc$cardptr
+	call	drawcardb	;draw card base
+
+	lhld	dc$cardptr	;A=cardptr->flipped
+	lxi	d,cardflipped	
+	dad	d
+	mov	a,m
+	
+	cpi	0		;if (cardptr->flipped == FALSE)
+	jz	display$down
+	jmp	display$up	;else
+	
+display$down:
+	call	drawback	;draw back of card
+	jmp	display$continue
+
+display$up:
+	lhld	dc$cardptr	;draw front of card
+	call	drawflipcard
+	jmp	display$continue
+
+display$continue:
+	pop	h		;restore the initial cursor
 	shld	cursor
-	lxi	d,0		;start point
-	mvi	h,maxwidth	;end point
-	mvi	l,maxheight
-	mvi	b,0000$0000b	;mask
-	mvi	a,0000$0000b	;data
-	call	grectf		;clear full screen
-	ret
+	lhld	dc$cardptr	;restore HL
+	ret	
 ;/*}}}*/
 
 
-;procedure drawborder (void): dram
-;draw the board decorations
-;side effects: dram a de hl (grect)
-;/*{{{*/
-field$left	equ	0011$0000b
-field$right	equ	0000$1100b
-field$mleft	equ	0011$1111b
-field$mright	equ	1111$1100b
-
-drawborder:
-	mvi	a,field$left
-	sta	border$left
-	mvi	a,field$mleft
-	sta	border$mleft
-	mvi	a,field$right
-	sta	border$right
-	mvi	a,field$mright
-	sta	border$mright
-
-	mvi	d,0		;offset_a = (0,1)
-	mvi	e,1
-	mvi	h,maxwidth	;offset_b = (maxwidth,maxheight-1)
-	mvi	l,maxheight-1
-	call	grect
-
-	ret
-;/*}}}*/
-
-
-;procedure drawcardb (void): dram
+;procedure drawcardb ([cursor]): <display>
 ;draws the card base
-;side effects: dram
+;side effects: AF B DE HL [dram] [border$left] [border$mleft] [border$right] \
+;              [border$mright]
+;calls: grectf, grect
 ;/*{{{*/
 cardba$left	equ	1100$0000b	;left  card border a
 cardba$right	equ	0000$0011b	;right card border a
@@ -535,44 +497,10 @@ drawcardb:
 ;/*}}}*/
 
 
-;procedure curleft (a=value): cursor
-;move the cursor to the left
-;side effects:
-;/*{{{*/
-curright:
-	lhld	cursor
-	add	h
-	mov	h,a
-	shld	cursor
-	ret
-curleft:
-	lhld	cursor
-	mov	b,a
-	mov	a,h
-	sub	b
-	mov	h,a
-	shld	cursor
-	ret
-curdown:
-	lhld	cursor
-	add	l
-	mov	l,a
-	shld	cursor
-	ret
-curup:
-	lhld	cursor
-	mov	b,a
-	mov	a,l
-	sub	b
-	mov	l,a
-	shld	cursor
-	ret
-;/*}}}*/
-
-
-;procedure drawback (void): dram
+;procedure drawback ([cursor]): <display>
 ;draws the back of a card
-;side effects: dram
+;side effects: AF B DE [dram] [back$i] [back$j] [back$k] [back$l]
+;calls: rectf, curright, curdown, curleft, curright
 ;/*{{{*/
 back$offset	equ	0208h
 back$data	equ	1010$1010b
@@ -583,6 +511,7 @@ back$j:			ds	1
 back$k:			ds	1
 back$l:			ds	1
 drawback:
+	push	h
 	lhld	cursor
 	push	h
 
@@ -702,57 +631,217 @@ back$doned:
 
 back$donec:
 	pop	h
-	shld	cursor
-
 	pop	h
 	shld	cursor
 	
+	pop	h
+
 	ret
+;/*}}}*/
+
+
+;procedure drawsign (HL=cardptr, [gmsignarr], [cursor]): <display>
+;draws the card's sign/sign at cursor position
+;side effects: AF BC DE [dram]
+;calls: gdraw
+;/*{{{*/
+drawsign:
+	push	h
+	lxi	d,cardsign
+	dad	d
+	mov	l,m
+	mvi	h,0
+	dad	h
+	lxi	d,gmsignarr
+	dad	d
+	mov	e,m
+	inx	h
+	mov	d,m
+	xchg
+	lxi	d,gmsignsize
+	call	gdraw
+	pop	h
+	ret
+;/*}}}*/
+
+
+;procedure drawface (HL=cardptr, [gmcardfont], [cursor]): <display>
+;draws the card's face/number at cursor position
+;side effects: AF BC DE [dram]
+;calls: gdraw
+;/*{{{*/
+drawface:
+	push	h
+	lxi	d,cardface
+	dad	d
+	mov	l,m
+	mvi	h,0
+	dad	h
+	lxi	d,gmcardfont
+	dad	d
+	mov	e,m
+	inx	h
+	mov	d,m
+	xchg
+	lxi	d,gmfacesize
+	call	gdraw
+	pop	h
+	ret
+;/*}}}*/
+
+
+;procedure drawflipcard (HL=cardptr, [cursor]): <display> 
+;draws a flipped card at cursor
+;side effects: AF [dram] [deckptr] [cardpos]
+;calls: curright, curdown, curleft, drawsign
+;/*{{{*/
+cardsigntl$x	equ	1
+cardsigntl$y	equ	6
+cardsignbr$x	equ	cardwidth-2-1
+cardsignbr$y	equ	cardheight-8-6
+deckptr:	DS	2
+cardpos:	DS	2
+drawflipcard:
+	push	h
+	shld	deckptr		;store deckptr
+	lhld	cursor		;store card screen position
+	shld	cardpos
+
+	lhld	cardpos		;set curosr
+	shld	cursor
+	mvi	a,001h		;move to relative position
+	call	curright
+	mvi	a,006h
+	call	curdown
+	lhld	deckptr		;get card pointer
+	call	drawface	;draw top left card face
 	
-	
+	mvi	a,gmfaceheight+3
+	call	curdown
+	lhld	deckptr		;get card pointer
+	call	drawsign	;draw bottom right card sign
+
+	lhld	cardpos		;restore the cursor
+	shld	cursor
+	pop	h
+	ret
+
 ;/*}}}*/
 
 
-;procedure loaddram (void): ram[08000h..0c000h]
-;loads dram into vram pages 2+3 ram[08000h..0ffffh]
-;side effects: a ram[08000h..0ffffh] out[vrampage2] out[vrampage3]
+;procedure drawborder ([cursor]): <display>
+;draw the board decorations
+;side effects: AF DE HL [dram] [border$left] [border$mleft] [border$right] \
+;              [border$mright]
+;calls: grect
 ;/*{{{*/
-loaddram:
-	mvi	a,drampage0	;load dram page 0
-	out	vrampage2	;into vram page 2 (08000h-0bfffh)
-	mvi	a,drampage1	;load dram page 1
-	out	vrampage3	;load vram page 3 (0c000h-0ffffh)
+field$left	equ	0011$0000b
+field$right	equ	0000$1100b
+field$mleft	equ	0011$1111b
+field$mright	equ	1111$1100b
+
+drawborder:
+	mvi	a,field$left
+	sta	border$left
+	mvi	a,field$mleft
+	sta	border$mleft
+	mvi	a,field$right
+	sta	border$right
+	mvi	a,field$mright
+	sta	border$mright
+
+	mvi	d,0		;offset_a = (0,1)
+	mvi	e,1
+	mvi	h,maxwidth	;offset_b = (maxwidth,maxheight-1)
+	mvi	l,maxheight-1
+	call	grect
+
 	ret
 ;/*}}}*/
 
 
-;procedure loadmainram (void): ram[08000h..0c000h]
-;loads main ram page 2+3 into vram pages 2+3 ram[08000h..0ffffh]
-;side effects: a ram[08000h..0ffffh] out[vrampage2] out[vrampage3]
+;procedure clearscr (void): <display>
+;clears the screen
+;side effects: AF B DE HL [dram] [cursor] 
+;calls: grectf
 ;/*{{{*/
-loadmainram:
-	mvi	a,mainpage2	;load main page 2
-	out	vrampage2	;into vram page 2 (08000h-0c000h)
-	mvi	a,mainpage3	;load main page 3
-	out	vrampage3	;into vram page 3 (0c000h-0ffffh)
-	ret
-;/*}}}*
-
-
-;procedure resetscroll (void): out[0??h]
-;sets the scroll register to 0, so we can draw things easier
-;side effects: a out[scrollreg]
-;/*{{{*/
-resetscroll:
-	mvi	a,0		;a=scroll value
-	out	scrollreg	;output to the start scan register
+clearscr:
+	lxi	h,dram
+	shld	cursor
+	lxi	d,0		;start point
+	mvi	h,maxwidth	;end point
+	mvi	l,maxheight
+	mvi	b,0000$0000b	;mask
+	mvi	a,0000$0000b	;data
+	call	grectf		;clear full screen
 	ret
 ;/*}}}*/
 
 
-;procedure gdraw (de=arraylen, hl=*pixelarr): void
+;/*}}}*/
+
+
+;graphic procs
+;/*{{{*/
+;procedure curright (a=nbytes): HL=[cursor]
+;move the cursor to the right n bytes
+;side effects: AF HL [cursor]
+;/*{{{*/
+curright:
+	lhld	cursor
+	add	h
+	mov	h,a
+	shld	cursor
+	ret
+;/*}}}*/
+
+
+;procedure curleft (a=nbytes): HL=[cursor]
+;move the cursor to the left n bytes
+;side effects: AF B HL [cursor]
+;/*{{{*/
+curleft:
+	lhld	cursor
+	mov	b,a
+	mov	a,h
+	sub	b
+	mov	h,a
+	shld	cursor
+	ret
+;/*}}}*/
+
+
+;procedure curdown (a=nbytes): HL=[cursor]
+;move the cursor to the down n bytes
+;side effects: AF HL [cursor]
+;/*{{{*/
+curdown:
+	lhld	cursor
+	add	l
+	mov	l,a
+	shld	cursor
+	ret
+;/*}}}*/
+
+
+;procedure curup (a=nbytes): HL=[cursor]
+;move the cursor to the up n bytes
+;side effects: AF B HL [cursor]
+;/*{{{*/
+curup:
+	lhld	cursor
+	mov	b,a
+	mov	a,l
+	sub	b
+	mov	l,a
+	shld	cursor
+	ret
+;/*}}}*/
+
+
+;procedure gdraw (de=arraylen, hl=*pixelarr, [cursor]): <display> 
 ;takes an array of pixels, and draws them to dram, relative to cursor
-;side effects: af bc de hl dram[*]
+;side effects: AF BC DE HL [dram] [gdraw$arrptr] [gdraw$i] 
 ;/*{{{*/
 gdraw$arrptr:	ds	2	;*pixel
 gdraw$i		ds	2	;iterator u16
@@ -800,9 +889,11 @@ gdraw$done:
 ;/*}}}*/
 
 
-;procedure grectf (a=fillbyte, b=bitmask, de=offset_a, hl=offset_b): void
+;procedure grectf (a=fillbyte, b=bitmask, de=offset_a, hl=offset_b, \
+;                  [cursor]): <display>
 ;draws a filled rectange from offset_a (top left) to offset_b (bottom right)
-;side effects: dram[*]
+;side effects: AF B DE HL [dram] [grectf$data] [grectf$mask] [grectf$start] \
+;              [grectf$end] [grectf$i]
 ;/*{{{*/
 grectf$data:	ds	1
 grectf$mask:	ds	1
@@ -872,9 +963,9 @@ grectf$xdone:
 ;/*}}}*/	
 
 
-;procedure grect (de=offset_a, hl=offset_b): void
+;procedure grect (de=offset_a, hl=offset_b, [cursor]): <display>
 ;draw a rectange from offset_a (top left) to offset_b (bottom right)
-;side effects: dram[*]
+;side effects: AF B DE HL [dram] [grect$start] [grect$end] [grect$i]
 ;/*{{{*/
 grect$start:	ds	offsetsize
 grect$end:	ds	offsetsize
@@ -979,9 +1070,11 @@ grect$ydone:
 ;/*}}}*/
 
 
-;procedure gline (a=length, b=fillbyte, c=bitmask, de=offsetelem, hl=offset): dram
+;procedure gline (a=length, b=fillbyte, c=bitmask, de=offsetelem, hl=offset, \
+;                [cursor]): <display>
 ;draw a line
-;side effects: dram
+;side effects: AF B DE HL [dram] [gline$data] [gline$mask] [gline$offset] \
+;              [gline$offelem] [gline$length]
 ;/*{{{*/
 gline$data:	db	1
 gline$mask:	db	1
@@ -1030,7 +1123,399 @@ gline$loop:
 gline$done:
 	ret
 ;/*}}}*/
+
+
+;/*}}}*/
+
+
+;system procs
+;/*{{{*/
+
+;procedure command (c=command): (statreg1) (statreg2)
+;send a command to the control register, and wait for the acknowledgement bit
+;to compliment.
+;side effects: AF (ctrlreg) (statreg1) (statreg2)
+;/*{{{*/
+command:
+	push	b		;store bc
+
+	in	statreg2	;get pre status
+	ani	1000$0000b	;mask away trash
+	mov	b,a		;store prestatus in b
+
+	mov	a,c		;a=command	
+	out	ctrlreg		;run command
+
+command$ack:
+	in	statreg2	;get post status
+	ani	1000$0000b	;mask away trash
+	cmp	b		;while (ackflag == preflag) loop
+	jz	command$ack
+
+command$done:
+	pop	b		;restore bc
+	ret			;else return
+;/*}}}*/
+
+
+;procedure kbmi$enable (void): void
+;enable keyboard maskable interupts flag
+;side effects: AF C (ctrlreg) (statreg1) (statreg2)
+;/*{{{*/
+kbmi$enable:
+kbmi$toggle:
+	mvi	c,0000$0011b	;complement keyboard mi flag command
+	call	command		;run command
+	in	statreg1	;get result
+	ani	0000$0001b	;mask away trash
+	cpi	0		;if (kbmi_flag == false) toggle
+	jz	kbmi$toggle
+	ret			;else the flag is true, return
+;/*}}}*/
+
+
+;procedure readkey (void): A=keycode
+;await 1 key of user input
+;side effects: AF BC (ctrlreg) (statreg1) (statreg2)
+;/*{{{*/
+readkey:
+	;wait keycode
+	call	kbmi$enable	;make sure maskable interupts are enabled
+readkey$loop:
+	in	statreg2	;get keyboard status
+	ani	0100$0000b	;mask away trash
+	cpi	0		;while (keyboard_data_flag == 0) loop
+	jz	readkey$loop
+
+	;read keycode
+	mvi	c,0000$0001b	;get low nibble command
+	call	command		;run command
+	in	statreg2	;get result
+	ani	0000$1111b	;mask away trash
+	mov	b,a		;store low nib in b
+
+	mvi	c,0000$0010b	;get high nibble command
+	call	command		;run command
+	in	statreg2	;get result
+	ani	0000$1111b	;mask away trash
+	rlc !rlc !rlc !rlc	;bit shift high nib into position
 	
+	ora	b		;combine the high and low nibbles
+
+	ret			;return to caller (a=key)
+;/*}}}*/
+
+
+;procedure resetscroll (void): <display>
+;set scroll value to 0 lines.
+;side effects: A (scrollreg) <display>
+;/*{{{*/
+resetscroll:
+	mvi	a,0		;a=scroll value
+	out	scrollreg	;output to the start scan register
+	ret
+;/*}}}*/
+
+
+;procedure loaddram (void): [08000..0ffffh]
+;load the display ram pages into memory at 08000 and 0C000.
+;side effects: A (vrampage2) (vrampage3) [08000..0ffffh]
+;/*{{{*/
+loaddram:
+	mvi	a,drampage0	;load dram page 0
+	out	vrampage2	;into vram page 2 (08000h-0bfffh)
+	mvi	a,drampage1	;load dram page 1
+	out	vrampage3	;load vram page 3 (0c000h-0ffffh)
+	ret
+;/*}}}*/
+
+
+;procedure loadmainram (void): [08000..0ffffh]
+;load the upper main ram pages into memory at 08000 and 0C000.
+;side effects: A (vrampage2) (vrampage3) [08000..0ffffh]
+;/*{{{*/
+loadmainram:
+	mvi	a,mainpage2	;load main page 2
+	out	vrampage2	;into vram page 2 (08000h-0c000h)
+	mvi	a,mainpage3	;load main page 3
+	out	vrampage3	;into vram page 3 (0c000h-0ffffh)
+	ret
+;/*}}}*
+
+
+;/*}}}*/
+
+
+;variable data section
+;deck allocation
+numofdecks	equ	6	;number of decks
+singledecklen	equ	52	;number of cards in 1 deck
+decklen		equ	(singledecklen * numofdecks)
+deck:		ds	decklen * cardsize
+deck$index:	dw	0 
+
+
+;welcome screen graphics
+;/*{{{*/
+;struct pixel gmwelcome[gmwelcomelen]
+gmwelcomelen	equ	4
+gmwelcome:     ;y   x	pixel.data   pixel.mask
+	db	2,  2,	1010$1010b,  0000$0000b
+	db	2,  3,	0101$0101b,  0000$0000b
+	db	2,  2,	1111$0000b,  0000$1111b
+	db	2,  3,	1111$0000b,  0000$0000b
+;/*}}}*/
+
+;card sign graphics
+;/*{{{*/
+;struct pixel *gmsignarr[4]
+gmsignarr:
+	dw	gmspade
+	dw	gmheart
+	dw	gmclover
+	dw	gmdiamond
+
+gmsignwidth	equ	2
+gmsignheight	equ	8
+gmsignsize	equ	gmsignwidth * gmsignheight
+
+;struct pixel gmheart[gmsignsize]
+;               x  y  data        mask          x  y  data        mask
+gmheart:
+	db	0, 0, 0011$1110B, 0000$0000b,	0, 1, 0111$1100B, 0000$0000b
+	db	1, 0, 0111$1111B, 0000$0000b,	1, 1, 1111$1110B, 0000$0000b
+	db	2, 0, 1111$1111B, 0000$0000b,	2, 1, 1111$1111B, 0000$0000b
+	db	3, 0, 1111$1111B, 0000$0000b,	3, 1, 1111$1111B, 0000$0000b
+	db	4, 0, 0111$1111B, 0000$0000b,	4, 1, 1111$1110B, 0000$0000b
+	db	5, 0, 0011$1111B, 0000$0000b,	5, 1, 1111$1100B, 0000$0000b
+	db	6, 0, 0000$1111B, 0000$0000b,	6, 1, 1111$0000B, 0000$0000b
+	db	7, 0, 0000$0011B, 0000$0000b,	7, 1, 1100$0000B, 0000$0000b
+
+gmdiamond:
+	db	0, 0, 0000$0001b, 0000$0000b,	0, 1, 1000$0000b, 0000$0000b
+	db	1, 0, 0000$0111b, 0000$0000b,	1, 1, 1110$0000b, 0000$0000b
+	db	2, 0, 0001$1111b, 0000$0000b,	2, 1, 1111$1000b, 0000$0000b
+	db	3, 0, 0011$1111b, 0000$0000b,	3, 1, 1111$1100b, 0000$0000b
+	db	4, 0, 0011$1111b, 0000$0000b,	4, 1, 1111$1100b, 0000$0000b
+	db	5, 0, 0001$1111b, 0000$0000b,	5, 1, 1111$1000b, 0000$0000b
+	db	6, 0, 0000$0111b, 0000$0000b,	6, 1, 1110$0000b, 0000$0000b
+	db	7, 0, 0000$0001b, 0000$0000b,	7, 1, 1000$0000b, 0000$0000b
+
+gmspade:
+	db	0, 0, 0000$0011b, 0000$0000b,	0, 1, 1100$0000b, 0000$0000b
+	db	1, 0, 0000$1111b, 0000$0000b,	1, 1, 1111$0000b, 0000$0000b
+	db	2, 0, 0011$1111b, 0000$0000b,	2, 1, 1111$1100b, 0000$0000b
+	db	3, 0, 0111$1111b, 0000$0000b,	3, 1, 1111$1110b, 0000$0000b
+	db	4, 0, 1111$1111b, 0000$0000b,	4, 1, 1111$1111b, 0000$0000b
+	db	5, 0, 0111$1111b, 0000$0000b,	5, 1, 1111$1110b, 0000$0000b
+	db	6, 0, 0011$1001b, 0000$0000b,	6, 1, 1001$1100b, 0000$0000b
+	db	7, 0, 0000$0011b, 0000$0000b,	7, 1, 1100$0000b, 0000$0000b
+
+gmclover:
+	db	0, 0, 0000$0011b, 0000$0000b,	0, 1, 1100$0000b, 0000$0000b
+	db	1, 0, 0000$0111b, 0000$0000b,	1, 1, 1110$0000b, 0000$0000b
+	db	2, 0, 0000$0111b, 0000$0000b,	2, 1, 1110$0000b, 0000$0000b
+	db	3, 0, 0111$1011b, 0000$0000b,	3, 1, 1101$1110b, 0000$0000b
+	db	4, 0, 1111$1111b, 0000$0000b,	4, 1, 1111$1111b, 0000$0000b
+	db	5, 0, 1111$1101b, 0000$0000b,	5, 1, 1011$1111b, 0000$0000b
+	db	6, 0, 0111$1001b, 0000$0000b,	6, 1, 1001$1110b, 0000$0000b
+	db	7, 0, 0000$0011b, 0000$0000b,	7, 1, 1100$0000b, 0000$0000b
+;/*}}}*/
+
+;card face graphics
+;/*{{{*/
+;struct pixel *gmsignarr[13]
+gmcardfont:
+	dw	gmcardfont$two
+	dw	gmcardfont$three
+	dw	gmcardfont$four
+	dw	gmcardfont$five
+	dw	gmcardfont$six
+	dw	gmcardfont$seven
+	dw	gmcardfont$eight
+	dw	gmcardfont$nine
+	dw	gmcardfont$ten
+	dw	gmcardfont$jack
+	dw	gmcardfont$queen
+	dw	gmcardfont$king
+	dw	gmcardfont$ace
+
+gmfacewidth	equ	2
+gmfaceheight	equ	8
+gmfacesize	equ	gmfacewidth * gmfaceheight
+
+gmcardfont$two:
+;		x, y, databyte,   bitmask	x, y, databyte,   bitmask
+	db	0, 0, 0000$0111B, 0000$0000B, 	0, 1, 1110$0000B, 0000$0000B
+	db	1, 0, 0000$1000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
+	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$1000B, 0000$0000B
+	db	3, 0, 0000$0000B, 0000$0000B,	3, 1, 0001$0000B, 0000$0000B
+	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 0110$0000B, 0000$0000B
+	db	5, 0, 0000$0001B, 0000$0000B,	5, 1, 1000$0000B, 0000$0000B
+	db	6, 0, 0000$0110B, 0000$0000B,	6, 1, 0000$0000B, 0000$0000B
+	db	7, 0, 0001$1111B, 0000$0000B,	7, 1, 1111$1000B, 0000$0000B
+
+gmcardfont$three:
+	db	0, 0, 0001$1111B, 0000$0000B,	0, 1, 1111$1000B, 0000$0000B
+	db	1, 0, 0000$0000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
+	db	2, 0, 0000$0000B, 0000$0000B,	2, 1, 0110$0000B, 0000$0000B
+	db	3, 0, 0000$0001B, 0000$0000B,	3, 1, 1100$0000B, 0000$0000B
+	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 0010$0000B, 0000$0000B
+	db	5, 0, 0000$0000B, 0000$0000B,	5, 1, 0001$0000B, 0000$0000B
+	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0010$0000B, 0000$0000B
+	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1100$0000B, 0000$0000B
+
+gmcardfont$four:
+	db	0, 0, 0000$0000B, 0000$0000B,	0, 1, 0110$0000B, 0000$0000B
+	db	1, 0, 0000$0000B, 0000$0000B,	1, 1, 1010$0000B, 0000$0000B
+	db	2, 0, 0000$0001B, 0000$0000B,	2, 1, 0010$0000B, 0000$0000B
+	db	3, 0, 0000$0010B, 0000$0000B,	3, 1, 0010$0000B, 0000$0000B
+	db	4, 0, 0000$0100B, 0000$0000B,	4, 1, 0010$0000B, 0000$0000B
+	db	5, 0, 0000$1111B, 0000$0000B,	5, 1, 1111$1000B, 0000$0000B
+	db	6, 0, 0000$0000B, 0000$0000B,	6, 1, 0010$0000B, 0000$0000B
+	db	7, 0, 0000$0000B, 0000$0000B,	7, 1, 0010$0000B, 0000$0000B
+
+gmcardfont$five:
+	db	0, 0, 0001$1111B, 0000$0000B,	0, 1, 1111$1000B, 0000$0000B
+	db	1, 0, 0001$0000B, 0000$0000B,	1, 1, 0000$0000B, 0000$0000B
+	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$0000B, 0000$0000B
+	db	3, 0, 0000$1111B, 0000$0000B,	3, 1, 1110$0000B, 0000$0000B
+	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 0001$0000B, 0000$0000B
+	db	5, 0, 0000$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
+	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0000$1000B, 0000$0000B
+	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1111$0000B, 0000$0000B
+
+gmcardfont$six:
+	db	0, 0, 0000$1111B, 0000$0000B,	0, 1, 1111$0000B, 0000$0000B
+	db	1, 0, 0001$0000B, 0000$0000B,	1, 1, 0000$1000B, 0000$0000B
+	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$0000B, 0000$0000B
+	db	3, 0, 0001$0111B, 0000$0000B,	3, 1, 1111$0000B, 0000$0000B
+	db	4, 0, 0001$1000B, 0000$0000B,	4, 1, 0000$1000B, 0000$0000B
+	db	5, 0, 0001$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
+	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0000$1000B, 0000$0000B
+	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1111$0000B, 0000$0000B
+
+gmcardfont$seven:
+	db	0, 0, 0001$1111B, 0000$0000B,	0, 1, 1111$1000B, 0000$0000B
+	db	1, 0, 0000$0000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
+	db	2, 0, 0000$0000B, 0000$0000B,	2, 1, 0010$0000B, 0000$0000B
+	db	3, 0, 0000$0111B, 0000$0000B,	3, 1, 1111$1000B, 0000$0000B
+	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 1000$0000B, 0000$0000B
+	db	5, 0, 0000$0001B, 0000$0000B,	5, 1, 0000$0000B, 0000$0000B
+	db	6, 0, 0000$0010B, 0000$0000B,	6, 1, 0000$0000B, 0000$0000B
+	db	7, 0, 0000$0100B, 0000$0000B,	7, 1, 0000$0000B, 0000$0000B
+
+gmcardfont$eight:
+	db	0, 0, 0000$0111B, 0000$0000B,	0, 1, 1110$0000B, 0000$0000B
+	db	1, 0, 0000$1000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
+	db	2, 0, 0000$1000B, 0000$0000B,	2, 1, 0001$0000B, 0000$0000B
+	db	3, 0, 0000$0111B, 0000$0000B,	3, 1, 1110$0000B, 0000$0000B
+	db	4, 0, 0000$1000B, 0000$0000B,	4, 1, 0001$0000B, 0000$0000B
+	db	5, 0, 0001$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
+	db	6, 0, 0000$1000B, 0000$0000B,	6, 1, 0001$0000B, 0000$0000B
+	db	7, 0, 0000$0111B, 0000$0000B,	7, 1, 1110$0000B, 0000$0000B
+
+gmcardfont$nine:
+	db	0, 0, 0000$1111B, 0000$0000B,	0, 1, 1111$0000B, 0000$0000B
+	db	1, 0, 0001$0000B, 0000$0000B,	1, 1, 0000$1000B, 0000$0000B
+	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$1000B, 0000$0000B
+	db	3, 0, 0001$0000B, 0000$0000B,	3, 1, 0001$1000B, 0000$0000B
+	db	4, 0, 0000$1111B, 0000$0000B,	4, 1, 1110$1000B, 0000$0000B
+	db	5, 0, 0000$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
+	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0000$1000B, 0000$0000B
+	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1111$0000B, 0000$0000B
+
+gmcardfont$ten:
+	db	0, 0, 1100$0000B, 0000$0000B,	0, 1, 1111$1110B, 0000$0000B
+	db	1, 0, 0010$0001B, 0000$0000B,	1, 1, 0000$0101B, 0000$0000B
+	db	2, 0, 0010$0001B, 0000$0000B,	2, 1, 0000$1001B, 0000$0000B
+	db	3, 0, 0010$0001B, 0000$0000B,	3, 1, 0001$0001B, 0000$0000B
+	db	4, 0, 0010$0001B, 0000$0000B,	4, 1, 0010$0001B, 0000$0000B
+	db	5, 0, 0010$0001B, 0000$0000B,	5, 1, 0100$0001B, 0000$0000B
+	db	6, 0, 0010$0001B, 0000$0000B,	6, 1, 1000$0001B, 0000$0000B
+	db	7, 0, 1111$1000B, 0000$0000B,	7, 1, 1111$1110B, 0000$0000B
+
+gmcardfont$ace:
+	db	0, 0, 0000$0011B, 0000$0000B,	0, 1, 1100$0000B, 0000$0000B
+	db	1, 0, 0000$0100B, 0000$0000B,	1, 1, 0010$0000B, 0000$0000B
+	db	2, 0, 0000$1000B, 0000$0000B,	2, 1, 0001$0000B, 0000$0000B
+	db	3, 0, 0000$1000B, 0000$0000B,	3, 1, 0001$0000B, 0000$0000B
+	db	4, 0, 0001$1111B, 0000$0000B,	4, 1, 1111$1000B, 0000$0000B
+	db	5, 0, 0001$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
+	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0000$1000B, 0000$0000B
+	db	7, 0, 0001$0000B, 0000$0000B,	7, 1, 0000$1000B, 0000$0000B
+
+gmcardfont$king:
+	db	0, 0, 0001$0000B, 0000$0000B,	0, 1, 0001$0000B, 0000$0000B
+	db	1, 0, 0001$0000B, 0000$0000B,	1, 1, 0010$0000B, 0000$0000B
+	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0100$0000B, 0000$0000B
+	db	3, 0, 0001$1001B, 0000$0000B,	3, 1, 1000$0000B, 0000$0000B
+	db	4, 0, 0001$0110B, 0000$0000B,	4, 1, 0000$0000B, 0000$0000B
+	db	5, 0, 0001$0001B, 0000$0000B,	5, 1, 1000$0000B, 0000$0000B
+	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0110$0000B, 0000$0000B
+	db	7, 0, 0001$0000B, 0000$0000B,	7, 1, 0001$1000B, 0000$0000B
+
+gmcardfont$queen:
+	db	0, 0, 0000$0111B, 0000$0000B,	0, 1, 1110$0000B, 0000$0000B
+	db	1, 0, 0000$1000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
+	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$1000B, 0000$0000B
+	db	3, 0, 0001$0000B, 0000$0000B,	3, 1, 0000$1000B, 0000$0000B
+	db	4, 0, 0001$0000B, 0000$0000B,	4, 1, 0100$1000B, 0000$0000B
+	db	5, 0, 0000$1000B, 0000$0000B,	5, 1, 0011$0000B, 0000$0000B
+	db	6, 0, 0000$0111B, 0000$0000B,	6, 1, 1111$0000B, 0000$0000B
+	db	7, 0, 0000$0000B, 0000$0000B,	7, 1, 0000$1000B, 0000$0000B
+
+gmcardfont$jack:
+	db	0, 0, 0000$1111B, 0000$0000B,	0, 1, 1111$1000B, 0000$0000B
+	db	1, 0, 0000$0000B, 0000$0000B,	1, 1, 0100$0000B, 0000$0000B
+	db	2, 0, 0000$0000B, 0000$0000B,	2, 1, 0100$0000B, 0000$0000B
+	db	3, 0, 0000$0000B, 0000$0000B,	3, 1, 0100$0000B, 0000$0000B
+	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 0100$0000B, 0000$0000B
+	db	5, 0, 0001$0000B, 0000$0000B,	5, 1, 0100$0000B, 0000$0000B
+	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0100$0000B, 0000$0000B
+	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1000$0000B, 0000$0000B
+
+;0
+;	db	0, 0, 0000$1111B, 0000$0000B,	0, 0, 1111$0000B, 0000$0000B
+;	db	0, 0, 0001$0000B, 0000$0000B,	0, 0, 0010$1000B, 0000$0000B
+;	db	0, 0, 0001$0000B, 0000$0000B,	0, 0, 0100$1000B, 0000$0000B
+;	db	0, 0, 0001$0000B, 0000$0000B,	0, 0, 1000$1000B, 0000$0000B
+;	db	0, 0, 0001$0001B, 0000$0000B,	0, 0, 0000$1000B, 0000$0000B
+;	db	0, 0, 0001$0010B, 0000$0000B,	0, 0, 0000$1000B, 0000$0000B
+;	db	0, 0, 0001$0100B, 0000$0000B,	0, 0, 0000$1000B, 0000$0000B
+;	db	0, 0, 0000$1111B, 0000$0000B,	0, 0, 1111$0000B, 0000$0000B
+
+;/*}}}*/
+
+;font graphics
+;/*{{{*/
+;struct pixel *gmsignarr[13]
+;gmfontalpha:
+;	dw	gmfont$a,	gmfont$b,	gmfont$c,	gmfont$d
+;	dw	gmfont$e,	gmfont$f,	gmfont$g,	gmfont$h
+;	dw	gmfont$i,	gmfont$j,	gmfont$k,	gmfont$l
+;	dw	gmfont$m,	gmfont$n,	gmfont$o,	gmfont$p
+;	dw	gmfont$q,	gmfont$r,	gmfont$s,	gmfont$t
+;	dw	gmfont$u,	gmfont$v,	gmfont$w,	gmfont$x
+;	dw	gmfont$y,	gmfont$z,	
+;
+;gmfontextra:
+;	dw	gmfont$comma, 	gmfont$period,	gmfont$qmark,	gmfont$bang
+;	dw	gmfont$space
+;
+;gmfontnum:
+;	dw	gmfont$zero,	gmfont$one, 	gmfont$two,	gmfont$three
+;	dw	gmfont$four,	gmfont$five, 	gmfont$six, 	gmfont$seven
+;	dw	gmfont$eight,	gmfont$nine
+;
+;gmfacesize	equ	16
+;/*}}}*/
+
+
+;graphics variables
+;/*{{{*/
+;byte *cursor;
+cursor		ds	2	;current position in dram
 
 border$top:	db	1111$1111b
 border$bottom:	db	1111$1111b
@@ -1041,110 +1526,13 @@ border$mtop:	db	1111$1111b
 border$mbottom:	db	1111$1111b
 border$mleft:	db	1111$1111b
 border$mright:	db	1111$1111b
-
-;byte *cursor;
-cursor		ds	2	;current position in dram
-
-;struct pixel gmwelcome[]
-gmwelcomelen	equ	4
-gmwelcome:     ;y   x	pixel.data   pixel.mask
-	db	2,  2,	1010$1010b,  0000$0000b
-	db	2,  3,	0101$0101b,  0000$0000b
-	db	2,  2,	1111$0000b,  0000$1111b
-	db	2,  3,	1111$0000b,  0000$0000b
-
-;/*{{{*/
-gmheart:
-	db	0,  0,  0011$1110B,  0000$0000b
-	db	0,  1,  0111$1100B,  0000$0000b
-	db	1,  0,  0111$1111B,  0000$0000b 
-	db	1,  1,  1111$1110B,  0000$0000b
-	db	2,  0,  1111$1111B,  0000$0000b 
-	db	2,  1,  1111$1111B,  0000$0000b
-	db	3,  0,  1111$1111B,  0000$0000b 
-	db	3,  1,  1111$1111B,  0000$0000b
-	db	4,  0,  0111$1111B,  0000$0000b 
-	db	4,  1,  1111$1110B,  0000$0000b
-	db	5,  0,  0011$1111B,  0000$0000b 
-	db	5,  1,  1111$1100B,  0000$0000b
-	db	6,  0,  0000$1111B,  0000$0000b 
-	db	6,  1,  1111$0000B,  0000$0000b
-	db	7,  0,  0000$0011B,  0000$0000b 
-	db	7,  1,  1100$0000B,  0000$0000b
-
-gmdiamond:
-	db	0,  0,  0000$0001b,  0000$0000b
-	db	0,  1,  1000$0000b,  0000$0000b
-	db	1,  0,  0000$0111b,  0000$0000b
-	db	1,  1,  1110$0000b,  0000$0000b
-	db	2,  0,  0001$1111b,  0000$0000b
-	db	2,  1,  1111$1000b,  0000$0000b
-	db	3,  0,  0011$1111b,  0000$0000b
-	db	3,  1,  1111$1100b,  0000$0000b
-	db	4,  0,  0011$1111b,  0000$0000b
-	db	4,  1,  1111$1100b,  0000$0000b
-	db	5,  0,  0001$1111b,  0000$0000b
-	db	5,  1,  1111$1000b,  0000$0000b
-	db	6,  0,  0000$0111b,  0000$0000b
-	db	6,  1,  1110$0000b,  0000$0000b
-	db	7,  0,  0000$0001b,  0000$0000b
-	db	7,  1,  1000$0000b,  0000$0000b
-
-gmspade:
-	db	0,  0,  0000$0001b,  0000$0000b
-	db	0,  1,  1000$0000b,  0000$0000b
-	db	1,  0,  0000$1111b,  0000$0000b
-	db	1,  1,  1111$0000b,  0000$0000b
-	db	2,  0,  0011$1111b,  0000$0000b
-	db	2,  1,  1111$1100b,  0000$0000b
-	db	3,  0,  0111$1111b,  0000$0000b
-	db	3,  1,  1111$1110b,  0000$0000b
-	db	4,  0,  1111$1111b,  0000$0000b
-	db	4,  1,  1111$1111b,  0000$0000b
-	db	5,  0,  0111$1111b,  0000$0000b
-	db	5,  1,  1111$1110b,  0000$0000b
-	db	6,  0,  0011$1001b,  0000$0000b
-	db	6,  1,  1001$1100b,  0000$0000b
-	db	7,  0,  0000$0011b,  0000$0000b
-	db	7,  1,  1100$0000b,  0000$0000b
-
-gmclover:
-	db	0,  0,  0000$0011b,  0000$0000b
-	db	0,  1,  1100$0000b,  0000$0000b
-	db	1,  0,  0000$0111b,  0000$0000b
-	db	1,  1,  1110$0000b,  0000$0000b
-	db	2,  0,  0000$0111b,  0000$0000b
-	db	2,  1,  1110$0000b,  0000$0000b
-	db	3,  0,  0111$1011b,  0000$0000b
-	db	3,  1,  1101$1110b,  0000$0000b
-	db	4,  0,  1111$1111b,  0000$0000b
-	db	4,  1,  1111$1111b,  0000$0000b
-	db	5,  0,  1111$1101b,  0000$0000b
-	db	5,  1,  1011$1111b,  0000$0000b
-	db	6,  0,  0111$1001b,  0000$0000b
-	db	6,  1,  1001$1110b,  0000$0000b
-	db	7,  0,  0000$0011b,  0000$0000b
-	db	7,  1,  1100$0000b,  0000$0000b
 ;/*}}}*/
 
-gmtypesize	equ	16
-gmtypearr:
-	dw	gmspade
-	dw	gmheart
-	dw	gmclover
-	dw	gmdiamond
-
-
+;random numbers
 tsalt:		ds	2	;salt for random number generation
 genprand:	ds	2	;psudo random number ptrarray
 
-numofdecks	equ	6	;number of decks
-singledecklen	equ	52	;number of cards in 1 deck
-decklen		equ	(singledecklen * numofdecks)
-deck:		ds	decklen * cardsize
-deck$index:	dw	0 
-
-
+;program stack
 cpmstack:	ds	2
 stacksize	equ	1024
 stackstart:	ds	stacksize
@@ -1154,3 +1542,5 @@ memory:		equ	$
 
 
 ; vim: ts=8 sts=8 sw=8 noet fdm=marker
+; end of file
+
