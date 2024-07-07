@@ -218,6 +218,57 @@ halt:	hlt
 ;main procedures
 ;/*{{{*/
 
+
+;procedure getcardvalue (HL=cardptr): A=hardvalue B=softvalue
+;return the value associated with a card
+;side effects: idk i stopped keeping track
+;/*{{{*/
+getcardvalue:
+	push	h	;preserve cardptr
+
+	lxi	d,cardface	;A=cardptr->face
+	dad	d
+	mov	a,m
+
+	cpi	face$ace	! jz	cardvalue$ace
+	
+	cpi	face$king	! jz	cardvalue$face
+	cpi	face$queen	! jz	cardvalue$face
+	cpi	face$jack	! jz	cardvalue$face
+
+	cpi	face$ten	! jz	cardvalue$number
+	cpi	face$nine	! jz	cardvalue$number
+	cpi	face$eight	! jz	cardvalue$number
+	cpi	face$seven	! jz	cardvalue$number
+	cpi	face$six	! jz	cardvalue$number
+	cpi	face$five	! jz	cardvalue$number
+	cpi	face$four	! jz	cardvalue$number
+	cpi	face$three	! jz	cardvalue$number
+	cpi	face$two	! jz	cardvalue$number
+
+	jmp	cardvalue$unknown
+cardvalue$number:
+	adi	2-face$two
+	mov	b,a
+	jmp	cardvalue$exit
+cardvalue$ace:
+	mvi	b,11
+	mvi	a,1
+	jmp	cardvalue$exit
+cardvalue$face:
+	mvi	a,10	
+	mov	b,a
+	jmp	cardvalue$exit
+cardvalue$unknown:
+	xra	a
+	mov	b,a
+	jmp	cardvalue$exit
+
+cardvalue$exit:
+	pop	h	;restore cardptr
+	ret
+;/*}}}*/
+
 ;procedure drawwelcome (void): tsalt
 ;draws welcome page and defines tsalt
 ;side effects: (gdraw) hl de cursor tsalt
@@ -284,6 +335,13 @@ newgame:
 	call	player$hit		;player draws 2 cards
 	call	player$hit
 
+	lhld	player+playerhandi
+	lxi	d,handsoft
+	dad	d
+	mov	a,m
+	cpi	21
+	jz	player$bj
+
 game$loop:
 player$turn:
 	call	readkey		;read a key
@@ -294,7 +352,7 @@ player$turn:
 	jz	game$hit
 
 	cpi	'd'
-	jz	game$double;
+	jz	game$double
 
 	cpi	's'
 	jz	game$stand
@@ -303,6 +361,15 @@ player$turn:
 
 game$hit:
 	call	player$hit	;player hits
+
+	lhld	player+playerhandi
+	lxi	d,handsoft
+	dad	d
+	mov	a,m
+	cpi	21
+	jz	player$win
+	jnc	player$bust
+
 	jmp	game$loop	;and returns to prompt
 
 game$double:
@@ -316,6 +383,18 @@ game$double:
 	shld	player$cursor
 
 	call	player$hit	;player hits
+
+	lhld	player+playerhandi
+	lxi	d,handsoft
+	dad	d
+	mov	a,m
+	cpi	21
+	jz	player$win
+	jnc	player$bust
+
+player$bj:
+player$win:
+player$bust:
 	jmp	dealer$turn	;and their turn is over
 
 game$stand:
@@ -323,11 +402,23 @@ dealer$turn:
 	lhld	dealer+dealerm		;draw first card faceup
 	call	dealer$drawcard
 	
-	call	dealer$hit		;dealer hits
+dealer$loop:
+	lda	dealer+dealerhard
+	cpi	17
+	jnc	dealer$done
+
 	call	dealer$hit		;dealer hits 2 times
+	jmp	dealer$loop
 
+dealer$done:
+	lda	dealer+dealerhard
+	cpi	21
+	jz	dealer$win
+	jnc	dealer$bust
+
+dealer$win:
+dealer$bust:
 	call	readkey			;read a key
-
 	jmp	newgame
 
 game$done:
@@ -352,13 +443,37 @@ player$hit:
 
 	call	drawcard$faceup		;draw card faceup
 
+	call	getcardvalue		;A=card value
+	lhld	player+playerhandi	;update hand totals
+	call	updatetotals
+
 	lxi	d,player$cursorreset	;DE=&player$cursorreset
 	lxi	h,player$cursor		;hl=&player$cursor
 	call	movenextcard		;update DE and HL to new positions
 	
 	ret
+
 ;/*}}}*/
 
+updatetotals:
+	mov	c,a
+
+	push	h
+	lxi	d,handhard
+	dad	d
+	mov	a,m
+	add	c
+	mov	m,a
+	pop	h
+
+	push	h
+	lxi	d,handsoft
+	dad	d
+	mov	a,m
+	add	b
+	mov	m,a
+	pop	h
+	ret
 
 ;procedure dealer$hiddenhit (void): [dealer]
 ;trys to draws a card for the dealer, then displays face down
@@ -410,7 +525,11 @@ dealer$drawcard:
 	shld	cursor
 	pop	h			;retore card
 	call	drawcard$faceup		;draw card faceup
-
+	
+	call	getcardvalue		;A=card value
+	lxi	h,dealer		;update hand totals
+	call	updatetotals
+	
 	lxi	d,dealer$cursorreset	;DE=&dealer$cursorreset
 	lxi	h,dealer$cursor		;hl=&dealer$cursor
 	call	movenextcard		;update DE and HL to new positions
@@ -1649,7 +1768,7 @@ player:			ds	playersize
 ;dealer data section
 dealer$cursor		ds	ptrsize
 dealer$cursorreset	ds	ptrsize
-dealer:		ds	dealersize
+dealer:			ds	dealersize
 
 
 ;welcome screen graphics
