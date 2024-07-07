@@ -3,6 +3,9 @@
 ;data types (structures and enums)
 ;/*{{{*/
 
+true	equ	0FFH
+false	equ	000H
+
 u8size		equ	1
 u16size		equ	2
 ptrsize		equ	u16size
@@ -97,11 +100,11 @@ handsize	equ	handm     + (ptrsize*maxhandcards)
 
 
 ;typedef struct hand dealer;
-dealercount	equ	structbase
-dealersoft	equ	dealercount + u8size
-dealerhard	equ	dealersoft  + u8size
-dealerm		equ	dealerhard  + u8size
-dealersize	equ	dealerm     + (ptrsize*maxhandcards)
+dealercount	equ	handcount
+dealersoft	equ	handsoft
+dealerhard	equ	handhard
+dealerm		equ	handm
+dealersize	equ	handsize
 
 
 ;struct player {
@@ -109,6 +112,7 @@ dealersize	equ	dealerm     + (ptrsize*maxhandcards)
 ;  u16   score
 ;  u16   bet
 ;  u8    handcount
+;  hand *handiter
 ;  hand  handarr[handlen]
 ;}
 pnamelen	equ	32
@@ -117,7 +121,8 @@ playername	equ	structbase
 playerscore	equ	playername    + (charsize*pnamelen)
 playerbet	equ	playerscore   + u16size
 playerhcount	equ	playerbet     + u16size
-playerhandarr	equ	playerhcount  + u8size
+playerhandi	equ	playerhcount  + u8size
+playerhandarr	equ	playerhandi   + ptrsize
 playersize	equ	playerhandarr + (handsize*phandlen)
 
 
@@ -162,14 +167,29 @@ cardwidth	equ	12	;96
 cardheight	equ	74	;148
 
 deckoffset	equ	00308h	;(24,16)
-dealerhandoff	equ	01508h
-playerhandoff	equ	01570h
+dealerhandoff	equ	01508h	;x values must match for dealer and
+playerhandoff	equ	01560h	;player for x overflow to work
 
 presentoffset	equ	02280h	;(34,128)
 
 nextcardx	equ	6
-overflowcardx	equ	nextcardx/2
+nextcardy	equ	0
+
+doublecardx	equ	nextcardx/4
+doublecardy	equ	256-12
+
+temp$a		set	((dram + playerhandoff) AND 0FF00H) SHR 8
+temp$b		set	(temp$a + (nextcardx/2)) XOR (temp$a)
+overflowcardx	equ	temp$b
 overflowcardy	equ	30
+
+;trap, if the x value of dealer and player offsets differ, the overflow
+;calculation will fail. the following will throw an assembler error, if
+;they differ
+TRAP	SET	(((dealerhandoff XOR playerhandoff) AND 0FF00H) SHR 8)
+IF TRAP
+error_player_and_dealer_x_offsets_differ:
+ENDIF
 
 
 ;program start
@@ -183,9 +203,6 @@ init:
 	call	loaddram	;load dram
 	call	resetscroll	;reset dram scroll
 start:	
-	call	initdeck	;initialize the deck (unshuffled)
-	call	initplayer	;initialize the player object
-	call	initdealer	;initialize the dealer
 	call	drawtestpage	;draw a test page
 
 exit:
@@ -200,308 +217,6 @@ halt:	hlt
 
 ;main procedures
 ;/*{{{*/
-
-;procedure drawtestpage (void): 
-;draw page for testing
-;side effects: Assume ALL
-;calls: initdeck
-;/*{{{*/
-drawtestpage:
-newgame:
-	call	resetdealer
-	call	resetplayer
-	
-	call	clearscr	;clear the screen
-	call	drawborder	;draw the table decorations
-
-	lxi	h,dram+deckoffset	;set cursor
-	shld	cursor
-	call	drawcard$facedown	;draw facedown card
-
-	call	deckdraw	
-	lxi	d,dealer		;draw 2 cards into the dealers hand
-	call	handaddcard
-	call	deckdraw	
-	call	handaddcard
-
-	lxi	d,player+playerhandarr	;draw 2 cards into player hand[0]
-	call	deckdraw	
-	call	handaddcard
-	call	deckdraw	
-	call	handaddcard
-
-	lxi	h,dram+dealerhandoff	;set dealer position
-	shld	cursor
-	call	drawdealerfirst		;draw dealers first hand 1st down
-
-	lxi	h,dram+playerhandoff	;set cursor position
-	shld	cursor
-	lxi	h,player+playerhandarr	;HL=plaer.hand[0]
-	call	drawhand		;draw hand to screen
-
-testpage$loop:
-	call	readkey		;read a key
-	cpi	'q'		;if (key == 'q') break
-	jz	testpage$done
-	
-	cpi	'h'
-	jz	testpage$hit
-
-	cpi	'd'
-	jz	testpage$double
-
-	cpi	's'
-	jz	testpage$stand
-	
-	jmp	testpage$loop	;and wait for next key
-
-testpage$hit:
-	lxi	d,player+playerhandarr	;player hits and draws
-	call	deckdraw	
-	call	handaddcard
-
-	lxi	h,dram+playerhandoff	;set cursor position
-	shld	cursor
-	lxi	h,player+playerhandarr	;HL=plaer.hand[0]
-	call	drawhand		;draw hand to screen
-	
-	jmp	testpage$loop
-
-testpage$double:
-	lxi	d,player+playerhandarr	;player doubles and draws 1 card
-	call	deckdraw	
-	call	handaddcard
-
-	lxi	h,dram+playerhandoff	;set cursor position
-	shld	cursor
-	lxi	h,player+playerhandarr	;HL=plaer.hand[0]
-	call	drawhand		;draw hand to screen
-	
-	jmp	testpage$stand
-
-testpage$stand:
-	lxi	d,dealer		;dealer always draws
-	call	deckdraw	
-	call	handaddcard
-
-	lxi	h,dram+dealerhandoff	;set cursor position
-	shld	cursor
-	lxi	h,dealer		;HL=dealer
-	call	drawhand		;draw hand to screen
-	
-	call	readkey		;read a key
-
-	jmp	newgame
-	
-
-testpage$done:
-	ret
-
-
-hac$phand:	DS	ptrsize
-hac$pcard:	DS	ptrsize
-handaddcard:
-	;DE=hand
-	;HL=cardptr
-	shld	hac$pcard	;store card ptr
-	xchg			;store hand ptr
-	shld	hac$phand
-
-	lhld	hac$phand	;HL=handptr->count
-	lxi	d,handcount
-	dad	d
-	mov	A,M		;A=count
-
-	cpi	maxhandcards+1	;if (handptr->count >= maxhandcards+1)
-	jnc	hac$panic	;  panic, cannot add card, hand full
-
-	push	H		;store &handptr->count
-
-	lhld	hac$phand	;HL=handptr->m[handptr->count]
-	lxi	d,handm
-	dad	d
-	xchg
-	mov	l,a		;A is still loaded from precheck
-	mvi	h,0
-	dad	h
-	dad	d
-
-	xchg			;DE=handiter	
-	lhld	hac$pcard	;HL=cardptr
-	xchg			;HL=handiter  DE=cardptr
-	
-	mov	m,e		;store loworder byte (little endian)
-	inx	h
-	mov	m,d		;store highorder byte
-	inx	h
-
-	pop	H		;HL=&handptr->count
-	inr	m		;handptr->count++
-
-hac$panic:
-	lhld	hac$phand	;restore hand pointer to DE
-	xchg
-	ret
-
-ddfirst$savecur:	DS	offsetsize
-drawdealerfirst:
-	;[cursor]
-	lhld	cursor			;store the cursor
-	shld	ddfirst$savecur
-	
-	lda	dealer+dealercount	;A = dealer->count
-	cpi	2			;if (2 > A)
-	jc	ddfirst$panic		;  panic, too few cards
-	
-	lhld	ddfirst$savecur		;HL=cursor position
-	mov	a,h
-	adi	nextcardx
-	mov	h,a
-	shld	cursor
-	call	drawcard$facedown
-
-	lhld	ddfirst$savecur		;HL=cursor position
-	shld	cursor
-	lhld	dealer+dealerm+(1*cardsize)	
-	call	drawcard$faceup
-
-	lhld	ddfirst$savecur		;restore cursor
-	shld	cursor
-
-ddfirst$panic
-	;draw dealers first hand, card[0] face down, card[1] face up
-	ret
-
-drawhand$savecur:	ds	offsetsize
-drawhand$handptr:	ds	ptrsize
-drawhand$iter:		ds	ptrsize
-drawhand$i:		ds	u8size
-
-drawhand:
-	;[cursor]
-	;HL=hand
-	shld	drawhand$handptr
-	lhld	cursor
-	shld	drawhand$savecur
-
-	lhld	drawhand$handptr
-	lxi	d,handm
-	dad	d
-	shld	drawhand$iter
-
-	lhld	drawhand$handptr	
-	lxi	d,handcount
-	dad	d
-	mov	a,m
-	sta	drawhand$i
-
-drawhand$loop:
-	lxi	h,drawhand$i
-	mov	a,m	
-	cpi	0
-	jz	drawhand$done
-	dcr	m
-
-	lhld	drawhand$iter
-	mov	e,m
-	inx	h
-	mov	d,m
-	xchg
-	call	drawcard$faceup
-
-	lhld	drawhand$iter
-	lxi	d,ptrsize
-	dad	d
-	shld	drawhand$iter
-
-	lhld	cursor
-	mov	a,h	
-	mov	b,h
-	adi	nextcardx
-	mov	h,a
-	shld	cursor
-
-	lxi	d,dram
-	mov	a,d
-	adi	maxwidth-cardwidth-1
-	cmp	h
-	cc	drawhand$overflow
-
-	jmp	drawhand$loop
-
-drawhand$overflow:
-	lhld	drawhand$savecur
-
-	mov	a,h
-	adi	overflowcardx	
-	mov	h,a
-
-	mov	a,l
-	adi	overflowcardy
-	mov	l,a
-
-	shld	cursor
-
-	ret
-
-drawhand$done:
-	lhld	drawhand$savecur
-	shld	cursor
-
-	ret
-
-deckshuffle:
-	;idk howwww
-	ret
-
-initplayer:
-	;player.score = 1000
-	lxi	h,1000
-	shld	player+playerscore
-
-	;player.bet = 0
-	lxi	h,0
-	shld	player+playerbet
-
-	;player.name = 0
-	xra	a
-	sta	player+playername
-
-	;player.handarr[0].count = 0
-	;player.handarr[0].soft = 0
-	;player.handarr[0].hard = 0
-	sta	player+playerhandarr+(0*handsize)+handcount
-	sta	player+playerhandarr+(0*handsize)+handsoft
-	sta	player+playerhandarr+(0*handsize)+handhard
-	
-	;player.handcount = 1
-	inr	a
-	sta	player+playerhcount
-
-	ret
-
-resetplayer:
-	xra	a
-	sta	player+playerhandarr+(0*handsize)+handcount
-	sta	player+playerhandarr+(0*handsize)+handsoft
-	sta	player+playerhandarr+(0*handsize)+handhard
-	
-	;player.handcount = 1
-	inr	a
-	sta	player+playerhcount
-
-	ret
-
-resetdealer:
-initdealer:
-	xra	a
-	sta	dealer+dealercount
-	sta	dealer+dealersoft
-	sta	dealer+dealerhard
-	ret
-
-;/*}}}*/
-
 
 ;procedure drawwelcome (void): tsalt
 ;draws welcome page and defines tsalt
@@ -530,16 +245,375 @@ drawwelcome:
 ;/*}}}*/
 
 
+;procedure drawtestpage (void): 
+;draw page for testing
+;side effects: Assume ALL
+;calls: initdeck initplayer initdealer newgame
+;/*{{{*/
+drawtestpage:
+	call	initdeck	;initialize the deck (unshuffled)
+	call	initplayer	;initialize the player object
+	call	initdealer	;initialize the dealer
+	call	newgame
+	ret
+;/*}}}*/
+
+
+;procedure newgame (void): void
+;starts a new game, clearing variables and initiating the loop
+;side effects: Assume ALL
+;/*{{{*/
+newgame:
+	;prepare variables
+	call	resetdealer
+	call	resetplayer
+	
+	;prepare the screen
+	call	clearscr	;clear the screen
+	call	drawborder	;draw the table decorations
+
+	;draw the deck
+	lhld	deck$cursor		;set cursor
+	shld	cursor
+	call	drawcard$facedown	;draw facedown card
+
+	;game begine
+	call	dealer$hiddenhit
+	call	dealer$hit
+
+	call	player$hit		;player draws 2 cards
+	call	player$hit
+
+game$loop:
+player$turn:
+	call	readkey		;read a key
+	cpi	'q'		;if (key == 'q') break
+	jz	game$done
+	
+	cpi	'h'
+	jz	game$hit
+
+	cpi	'd'
+	jz	game$double;
+
+	cpi	's'
+	jz	game$stand
+	
+	jmp	game$loop	;and wait for next key
+
+game$hit:
+	call	player$hit	;player hits
+	jmp	game$loop	;and returns to prompt
+
+game$double:
+	lhld	player$cursor
+	mov	a,h
+	adi	doublecardx
+	mov	h,a
+	mov	a,l
+	adi	doublecardy
+	mov	l,a
+	shld	player$cursor
+
+	call	player$hit	;player hits
+	jmp	dealer$turn	;and their turn is over
+
+game$stand:
+dealer$turn:
+	lhld	dealer+dealerm		;draw first card faceup
+	call	dealer$drawcard
+	
+	call	dealer$hit		;dealer hits
+	call	dealer$hit		;dealer hits 2 times
+
+	call	readkey			;read a key
+
+	jmp	newgame
+
+game$done:
+	ret
+;/*}}}*/
+
+
+;procedure player$hit (void): [player]
+;trys to draws a card for the player, then displays it
+;side effects: AF DE HL [cursor] [player$cursor] [player$cursorreset] [deck]
+;/*{{{*/
+player$hit:
+	lhld	player$cursor		;set cursor position
+	shld	cursor
+
+	lhld	player+playerhandi	;DE=player->handiter
+	xchg
+	call	deckdraw		;HL=*newcard
+	call	handaddcard		;add newcard (HL) to hand (DE)
+	cpi	true			;if (card failed to add)
+	rnz				;  return
+
+	call	drawcard$faceup		;draw card faceup
+
+	lxi	d,player$cursorreset	;DE=&player$cursorreset
+	lxi	h,player$cursor		;hl=&player$cursor
+	call	movenextcard		;update DE and HL to new positions
+	
+	ret
+;/*}}}*/
+
+
+;procedure dealer$hiddenhit (void): [dealer]
+;trys to draws a card for the dealer, then displays face down
+;side effects: AF DE HL [cursor]
+;/*{{{*/
+dealer$hiddenhit:
+	lxi	d,dealer		;dealer draws 1 card
+	call	deckdraw
+	call	handaddcard
+
+	lhld	dealer$cursor		;store dealer$cursor
+	push	h
+	lhld	dealer$cursorreset	;store dealer$cursorreset
+	push	h
+
+	lxi	h,dealer$cursor
+	lxi	d,dealer$cursorreset
+	call	movenextcard
+
+	lhld	dealer$cursor
+	shld	cursor
+	call	drawcard$facedown	;draw card faceup
+
+	pop	h			;restore dealer$cursorreset
+	shld	dealer$cursorreset
+	pop	h			;restore dealer$cursor
+	shld	dealer$cursor
+	
+	ret
+;/*}}}*/
+
+
+;procedure dealer$hit (void): [dealer]
+;trys to draws a card for the dealer, then displays it
+;side effects: AF DE HL [cursor]
+;/*{{{*/
+dealer$hit:
+	lxi	d,dealer		;dealer draws 1 card
+	call	deckdraw
+	call	handaddcard
+	cpi	true			;if (card failed to add)
+	rnz				;  return
+dealer$drawcard:
+	push	h			;store card temp
+	lhld	dealer$cursor		;set cursor position
+	shld	cursor
+	pop	h			;retore card
+	call	drawcard$faceup		;draw card faceup
+
+	lxi	d,dealer$cursorreset	;DE=&dealer$cursorreset
+	lxi	h,dealer$cursor		;hl=&dealer$cursor
+	call	movenextcard		;update DE and HL to new positions
+	
+	ret
+;/*}}}*/
+
+
+;procedure movenextcard (DE=resetptr, HL=currentptr): void
+;moves cursor and cursorreset for next card
+;side effects: assume ALL
+;/*{{{*/
+mnc$cursor:	DS	ptrsize
+mnc$reset:	DS	ptrsize
+movenextcard:
+	shld	mnc$cursor
+	xchg
+	shld	mnc$reset
+	
+	lhld	mnc$cursor
+	call	derefget
+	lxi	d,dram
+	mov	a,d
+	adi	maxwidth-nextcardx-cardwidth-1
+	cmp	h
+	jc	movenext$overflow
+
+	xchg			;DE=*mnc$cursor
+	mov	a,d		;mnc$cursor->x + nextcardx
+	adi	nextcardx
+	mov	d,a
+	mov	a,e		;mnc$cursor->y + nextcardy
+	adi	nextcardy
+	mov	e,a
+
+	lhld	mnc$cursor	;*mnc$cursor = newcurosr
+	call	derefset
+
+	ret
+
+movenext$overflow:
+	lhld	mnc$reset
+	call	derefget
+
+	mov	a,h
+	xri	overflowcardx	
+	mov	h,a
+
+	mov	a,l
+	adi	overflowcardy
+	mov	l,a
+	shld	cursor
+
+	xchg			;DE=newcursor
+	lhld	mnc$cursor	;*mnc$cursor = newcursor
+	call	derefset
+
+	lhld	mnc$reset	;*mnc$reset = newcursor
+	call	derefset
+
+	ret
+;/*}}}*/
+
 ;/*}}}*/
 
 
 ;helper procs
 ;/*{{{*/
 
+
+;procedure handaddcard (DE=handptr, HL=cardptr): A=boolerr
+;add a card to a hand, if it cannot be done, return false, otherwise true
+;side effects: assume all
+;/*{{{*/
+hac$phand:	DS	ptrsize
+hac$pcard:	DS	ptrsize
+handaddcard:
+	;DE=hand
+	;HL=cardptr
+	shld	hac$pcard	;store card ptr
+	xchg			;store hand ptr
+	shld	hac$phand
+
+	lhld	hac$phand	;HL=handptr->count
+	lxi	d,handcount
+	dad	d
+	mov	A,M		;A=count
+
+	cpi	maxhandcards	;if (handptr->count >= maxhandcards)
+	jnc	hac$panic	;  panic, cannot add card, hand full
+
+	push	H		;store &handptr->count
+
+	lhld	hac$phand	;HL=handptr->m[handptr->count]
+	lxi	d,handm
+	dad	d
+	xchg
+	mov	l,a		;A is still loaded from precheck
+	mvi	h,0
+	dad	h
+	dad	d
+
+	xchg			;DE=handiter	
+	lhld	hac$pcard	;HL=cardptr
+	xchg			;HL=handiter  DE=cardptr
+	
+	mov	m,e		;store loworder byte (little endian)
+	inx	h
+	mov	m,d		;store highorder byte
+	inx	h
+
+	pop	H		;HL=&handptr->count
+	inr	m		;handptr->count++
+
+hac$normal:
+	mvi	a,true
+hac$exit:
+	lhld	hac$phand	;restore hand pointer to DE
+	xchg
+	lhld	hac$pcard
+	ret
+hac$panic:
+	mvi	a,false
+	jmp	hac$exit
+;/*}}}*/
+
+
+;procedure deckshuffle ([deck] [deck$top]): [deck] [deck$index]
+;TODO: implement shuffle procedure
+;side effects: to be defined
+;/*{{{*/
+deckshuffle:
+	;idk howwww
+	ret
+;/*}}}*/
+
+
+;procedure initplayer (void): [player]
+;initialize the player with default values
+
+;procedure resetplayer (void): [player]
+;reset player values to default
+;side effects: [player]
+;/*{{{*/
+initplayer:
+	;player.score = 1000
+	lxi	h,1000
+	shld	player+playerscore
+
+	;player.bet = 0
+	lxi	h,0
+	shld	player+playerbet
+
+	;player.name = 0
+	xra	a
+	sta	player+playername
+
+resetplayer:
+	lxi	h,player+playerhandarr+(0*handsize)
+	shld	player+playerhandi
+
+	lxi	h,dram+playerhandoff
+	shld	player$cursor
+	shld	player$cursorreset
+
+	;player.handarr[0].count = 0
+	;player.handarr[0].soft = 0
+	;player.handarr[0].hard = 0
+	xra	a
+	sta	player+playerhandarr+(0*handsize)+handcount
+	sta	player+playerhandarr+(0*handsize)+handsoft
+	sta	player+playerhandarr+(0*handsize)+handhard
+	
+	;player.handcount = 1
+	inr	a
+	sta	player+playerhcount
+
+	ret
+;/*}}}*/
+
+
+;procedure initdealer (void): [dealer]
+;procedure resetdealer (void): [dealer]
+;initialize the dealer with default values
+;side effects: [dealer]
+;/*{{{*/
+resetdealer:
+initdealer:
+	lxi	h,dram+dealerhandoff
+	shld	dealer$cursor
+	shld	dealer$cursorreset
+
+	xra	a
+	sta	dealer+dealercount
+	sta	dealer+dealersoft
+	sta	dealer+dealerhard
+	ret
+
+;/*}}}*/
+
+
+
 ;procedure initdeck (void): [deck] HL=[deck$index]
 ;initialize the deck (unshuffled)
-;side effects: AF DE HL [deck] [deck$index] [ideck$facei] [ideck$signi] \
-;              [ideck$decki]
+;side effects: AF DE HL [deck] [deck$index] [deck$cursor] [ideck$facei] \
+;              [ideck$signi] [ideck$decki]
 ;calls: getdeckindex
 ;/*{{{*/
 ideck$facei:	ds	1
@@ -549,6 +623,9 @@ ideck$decki:	ds	1
 initdeck:
 	lxi	h,0
 	shld	deck$index
+
+	lxi	h,dram+deckoffset
+	shld	deck$cursor
 
 ;deckloop$init:
 	mvi	a,numofdecks
@@ -1372,6 +1449,41 @@ gline$done:
 ;system procs
 ;/*{{{*/
 
+;procedure derefget (HL=ptr): HL=*ptr
+;dereferences a ptr in HL into a 16bit value
+;side effects: F HL
+;/*{{{*/
+derefget:
+	push	d
+
+	mov	e,m
+	inx	h
+	mov	d,m
+	xchg
+
+	pop	d
+	ret
+;/*}}}*/
+
+
+;procedure derefget (DE=value HL=ptr): [ptr]
+;dereferences a ptr HL loading a 16bit value into it
+;side effects: F
+;/*{{{*/
+derefset:
+	push	h
+	push	d
+	
+	mov	m,e
+	inx	h
+	mov	m,d
+
+	pop	d
+	pop	h
+	ret
+;/*}}}*/
+
+
 ;procedure command (c=command): (statreg1) (statreg2)
 ;send a command to the control register, and wait for the acknowledgement bit
 ;to compliment.
@@ -1489,6 +1601,7 @@ loadmainram:
 
 ;variable data section
 ;deck allocation
+deck$cursor	ds	ptrsize
 numofdecks	equ	6	;number of decks
 singledecklen	equ	52	;number of cards in 1 deck
 decklen		equ	(singledecklen * numofdecks)
@@ -1496,10 +1609,15 @@ deck:		ds	decklen * cardsize
 deck$index:	dw	0 
 deck$top:	dw	0 
 
+
 ;player data section
-player:		ds	playersize
+player$cursor		ds	ptrsize
+player$cursorreset	ds	ptrsize
+player:			ds	playersize
 
 ;dealer data section
+dealer$cursor		ds	ptrsize
+dealer$cursorreset	ds	ptrsize
 dealer:		ds	dealersize
 
 
