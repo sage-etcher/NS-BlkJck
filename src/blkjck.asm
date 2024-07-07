@@ -347,8 +347,8 @@ player$hit:
 	xchg
 	call	deckdraw		;HL=*newcard
 	call	handaddcard		;add newcard (HL) to hand (DE)
-	cpi	true			;if (card failed to add)
-	rnz				;  return
+	cpi	false			;if (card failed to add)
+	jz	deckudraw		;  undo the deckdraw call + return
 
 	call	drawcard$faceup		;draw card faceup
 
@@ -368,6 +368,8 @@ dealer$hiddenhit:
 	lxi	d,dealer		;dealer draws 1 card
 	call	deckdraw
 	call	handaddcard
+	cpi	false			;if (card failed to add)
+	jz	deckudraw		;  undo the deckdraw call + return
 
 	lhld	dealer$cursor		;store dealer$cursor
 	push	h
@@ -399,8 +401,9 @@ dealer$hit:
 	lxi	d,dealer		;dealer draws 1 card
 	call	deckdraw
 	call	handaddcard
-	cpi	true			;if (card failed to add)
-	rnz				;  return
+	cpi	false			;if (card failed to add)
+	jz	deckudraw		;  undo the deckdraw call + return
+
 dealer$drawcard:
 	push	h			;store card temp
 	lhld	dealer$cursor		;set cursor position
@@ -523,14 +526,14 @@ handaddcard:
 	inr	m		;handptr->count++
 
 hac$normal:
-	mvi	a,true
+	mvi	a,true		;return success
 hac$exit:
 	lhld	hac$phand	;restore hand pointer to DE
 	xchg
 	lhld	hac$pcard
 	ret
 hac$panic:
-	mvi	a,false
+	mvi	a,false		;return failure
 	jmp	hac$exit
 ;/*}}}*/
 
@@ -728,6 +731,18 @@ deckdraw$continue:
 
 	pop	h
 	pop	d
+	ret
+;/*}}}*/
+
+
+;procedure deckudraw ([deck$iter]): void
+;moved deck$iter back 1 card in the case of a failure
+;side effects: assume all
+;/*{{{*/
+deckudraw:
+	lhld	deck$index	;place card back on the deck
+	inx	h
+	shld	deck$index
 	ret
 ;/*}}}*/
 
