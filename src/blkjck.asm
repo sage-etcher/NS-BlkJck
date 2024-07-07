@@ -704,6 +704,10 @@ getdeckindex:
 ;/*}}}*/
 
 
+;procedure deckdraw ([deck]): HL=card
+;return a ptr to the top card on the deck
+;side effects: assume all
+;/*{{{*/
 deckdraw:
 	push	d
 	call	getdeckindex	;get to card of deck
@@ -725,8 +729,13 @@ deckdraw$continue:
 	pop	h
 	pop	d
 	ret
+;/*}}}*/
 
 
+;procedure drawcard$cardfaceup (HL=cardptr [cursor]): <display>
+;draw a card to the display in face up position
+;side effects: assume all
+;/*{{{*/
 drawcard$cardptr:	DS	ptrsize
 drawcard$faceup:
 	shld	drawcard$cardptr
@@ -741,7 +750,13 @@ drawcard$faceup:
 	shld	cursor
 	lhld	drawcard$cardptr
 	ret
+;/*}}}*/
 
+
+;procedure drawcard$cardfacedown ([cursor]): <display>
+;draw a card to the display in face down position
+;side effects: assume all
+;/*{{{*/
 drawcard$facedown:
 	push	H
 	lhld	cursor		;store the cardpos
@@ -754,6 +769,7 @@ drawcard$facedown:
 	shld	cursor
 	pop	H
 	ret
+;/*}}}*/
 
 
 ;procedure drawcardb ([cursor]): <display>
