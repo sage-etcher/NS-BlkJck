@@ -23,15 +23,24 @@ offsety		equ	structbase
 offsetx		equ	u8size + offsety
 offsetsize	equ	u8size + offsetx
 
-;struct pixel { 
-;  offset off, 
-;  u8     data, 
-;  u8     mask 
+;struct texture { 
+;  u8	width,
+;  u8   height,
+;  u8   data[]
 ;}
-pixeloffset	equ	structbase
-pixeldata	equ	offsetsize + pixeloffset
-pixelmask	equ	u8size     + pixeldata
-pixelsize	equ	u8size	   + pixelmask
+texturewidth	equ	structbase
+textureheight	equ	u8size + texturewidth
+texturedata	equ	u8size + textureheight
+;the texturesize is determinate by it's width*height
+
+;enum handstate {
+;  hs$normal    = 0000 0001
+;  hs$bust      = 0000 0010
+;  hs$blackjack = 0000 0100
+;}
+hs$normal	equ	0000$0001b
+hs$bust		equ	0000$0010b
+hs$blackjack	equ	0000$0100b
 
 ;enum cardface {
 ;  face$two   = 0x00   
@@ -87,15 +96,17 @@ cardsizechk	equ	cardsize - (cardsign + u8size)
 
 ;struct hand {
 ;  u8  count
-;  u8  hardtotal
 ;  u8  softtotal
+;  u8  hardtotal
+;  hs  state
 ;  card *m[maxhandcards]
 ;}
 maxhandcards	equ	21	;21 aces is max
 handcount	equ	structbase
 handsoft	equ	handcount + u8size
 handhard	equ	handsoft  + u8size
-handm		equ	handhard  + u8size
+handstate	equ	handhard  + u8size
+handm		equ	handstate + u8size
 handsize	equ	handm     + (ptrsize*maxhandcards)
 
 
@@ -103,6 +114,7 @@ handsize	equ	handm     + (ptrsize*maxhandcards)
 dealercount	equ	handcount
 dealersoft	equ	handsoft
 dealerhard	equ	handhard
+dealerstate	equ	handstate
 dealerm		equ	handm
 dealersize	equ	handsize
 
@@ -128,7 +140,6 @@ playersize	equ	playerhandarr + (handsize*phandlen)
 
 
 ;/*}}}*/
-
 
 ;in/out register and const values
 ;/*{{{*/
@@ -159,6 +170,8 @@ gx	equ	00100h		;move > 1 cell in dram (8px)
 gy	equ	00001h		;move v 1 cell in dram (1px)
 ;/*}}}*/
 
+LF		equ	0A0H
+CR		equ	0D0H
 				;visibly if were 1:1
 maxwidth	equ	80	;640
 maxheight	equ	240	;480
@@ -167,8 +180,14 @@ cardwidth	equ	12	;96
 cardheight	equ	74	;148
 
 deckoffset	equ	00308h	;(24,16)
+
 dealerhandoff	equ	01508h	;x values must match for dealer and
+dealermsgoff	equ	01718h	;offset for printing dealer messages
+
 playerhandoff	equ	01560h	;player for x overflow to work
+playermsgoff	equ	01770h	;offset for printing player messages
+
+gamemsgoff	equ	02054h	;game message offset
 
 presentoffset	equ	02280h	;(34,128)
 
@@ -213,7 +232,6 @@ exit:
 	rst	0		;warm-boot
 halt:	hlt
 	jmp	halt
-
 
 ;main procedures
 ;/*{{{*/
@@ -278,9 +296,8 @@ drawwelcome:
 	lxi	h,dram		;hl=dram addr
 	shld	cursor		;place cursor at start of drom (topleft)
 
-	lxi	h,gmwelcome	;hl=welcome page pixels
-	lxi	d,gmwelcomelen	;de=welcome page len
-	call	gdraw		;draw pixels to screen
+	lxi	h,gmwelcome	;hl=welcome page texture
+	call	gdraw		;draw texture to screen
 
 				;todo: vvvv
 				;prompt for user input
@@ -318,7 +335,7 @@ newgame:
 	;prepare variables
 	call	resetdealer
 	call	resetplayer
-	
+
 	;prepare the screen
 	call	clearscr	;clear the screen
 	call	drawborder	;draw the table decorations
@@ -336,15 +353,14 @@ newgame:
 	call	player$hit
 
 	lhld	player+playerhandi
-	lxi	d,handsoft
-	dad	d
-	mov	a,m
-	cpi	21
+	call	check$21
+	cpi	true
 	jz	player$bj
 
 game$loop:
 player$turn:
-	call	readkey		;read a key
+	call	readkey
+
 	cpi	'q'		;if (key == 'q') break
 	jz	game$done
 	
@@ -363,12 +379,14 @@ game$hit:
 	call	player$hit	;player hits
 
 	lhld	player+playerhandi
-	lxi	d,handsoft
-	dad	d
-	mov	a,m
-	cpi	21
-	jz	player$win
-	jnc	player$bust
+	call	check$21
+	cpi	true
+	jz	player$done
+
+	lhld	player+playerhandi
+	call	check$bust
+	cpi	true
+	jz	player$bust
 
 	jmp	game$loop	;and returns to prompt
 
@@ -383,24 +401,26 @@ game$double:
 	shld	player$cursor
 
 	call	player$hit	;player hits
-
+	
 	lhld	player+playerhandi
-	lxi	d,handsoft
-	dad	d
-	mov	a,m
-	cpi	21
-	jz	player$win
-	jnc	player$bust
+	call	check$bust
+	cpi	true
+	jz	player$bust
 
-player$bj:
-player$win:
-player$bust:
-	jmp	dealer$turn	;and their turn is over
+	jmp	player$done	;and their turn is over
 
 game$stand:
+	;fallthrough
+player$done:
+	;fall through
 dealer$turn:
 	lhld	dealer+dealerm		;draw first card faceup
 	call	dealer$drawcard
+	
+	lxi	h,dealer
+	call	check$21
+	cpi	true
+	jz	dealer$bj
 	
 dealer$loop:
 	lda	dealer+dealerhard
@@ -408,20 +428,228 @@ dealer$loop:
 	jnc	dealer$done
 
 	call	dealer$hit		;dealer hits 2 times
-	jmp	dealer$loop
+
+	lxi	h,dealer
+	call	check$21
+	cpi	true
+	jz	dealer$done
+	
+	lxi	h,dealer
+	call	check$bust
+	cpi	true
+	jz	dealer$bust
+
+	jmp	dealer$loop		;check for bust of bj
 
 dealer$done:
-	lda	dealer+dealerhard
-	cpi	21
-	jz	dealer$win
-	jnc	dealer$bust
 
-dealer$win:
-dealer$bust:
+game$results:
+	;B = player->handi->state
+	lhld	player+playerhandi
+	lxi	d,handstate
+	dad	d
+	mov	b,m
+
+	;C = dealer->state
+	lxi	h,dealer+dealerstate
+	mov	c,m
+
+	;if player and dealer hit blackjack its a tie
+	mov	a,b
+	ora	c
+	cpi	hs$blackjack
+	jz	game$tie
+	
+	;else if only player hit blackjack they winbonus
+	mov	a,b
+	cpi	hs$blackjack
+	jz	game$blackjack
+
+	;else if only dealer hit blackjack player loses
+	mov	a,c
+	cpi	hs$blackjack
+	jz	game$lose
+
+	;else if player bust == player lose
+	mov	a,b
+	cpi	hs$bust
+	jz	game$lose
+
+	;else if dealer bust == player win 
+	mov	a,c
+	cpi	hs$bust
+	jz	game$win
+
+	;else if player has higher total, win
+	lhld	player+playerhandi
+	call	gethandtotal
+	mov	b,a
+
+	push	b
+	lxi	h,dealer
+	call	gethandtotal
+	pop	b
+
+	cmp	b
+	jz	game$tie
+	jc	game$win
+
+	;else lose
+	jmp	game$lose
+
+game$tie:
+	lxi	h,dram+gamemsgoff
+	shld	cursor
+	
+	lxi	d,mtie
+	call	gprint
+
+	jmp	gameover
+
+game$win:
+	lxi	h,dram+gamemsgoff
+	shld	cursor
+	
+	lxi	d,mwin
+	call	gprint
+
+	jmp	gameover
+
+game$blackjack:
+	lxi	h,dram+gamemsgoff
+	shld	cursor
+	
+	lxi	d,mblackjack
+	call	gprint
+
+	jmp	gameover
+
+game$lose:
+	lxi	h,dram+gamemsgoff
+	shld	cursor
+	
+	lxi	d,mlose
+	call	gprint
+
+	jmp	gameover
+
+gameover:
 	call	readkey			;read a key
 	jmp	newgame
 
 game$done:
+	ret
+
+ret$false:
+	mvi	a,false
+	ret
+ret$true:
+	mvi	a,true
+	ret
+
+check$21$hand:	ds	ptrsize
+check$21:
+	shld	check$21$hand	
+
+	lhld	check$21$hand
+	lxi	d,handsoft
+	dad	d
+	mov	a,m
+	cpi	21
+	jz	ret$true
+
+	lhld	check$21$hand
+	lxi	d,handhard
+	dad	d
+	mov	a,m
+	cpi	21
+	jz	ret$true
+
+	jmp	ret$false
+
+check$bust:
+	lxi	d,handhard
+	dad	d
+	mov	a,m
+	cpi	21
+	jnc	ret$true
+	jmp	ret$false
+
+
+mbust:		db	'Bust!',0
+mblackjack:	db	'Blackjack!!',0
+mwin:		db	'Win!',0
+mlose:		db	'Lose',0
+mtie:		db	'Tie',0
+
+player$bj:
+	lxi	h,dram+playermsgoff
+	shld	cursor
+
+	lxi	d,mblackjack
+	call	gprint
+
+	lhld	player+playerhandi	;player->handi->state = blackjack
+	lxi	d,handstate
+	dad	d
+	mvi	a,hs$blackjack
+	mov	m,a
+
+	jmp	player$done
+
+player$bust:
+	lxi	h,dram+playermsgoff
+	shld	cursor
+	
+	lxi	d,mbust
+	call	gprint
+
+	lhld	player+playerhandi	;player->handi->state = bust
+	lxi	d,handstate
+	dad	d
+	mvi	a,hs$bust
+	mov	m,a
+
+	jmp	player$done
+
+
+dealer$bj:
+	lxi	h,dram+dealermsgoff
+	shld	cursor
+
+	lxi	d,mblackjack
+	call	gprint
+
+	mvi	a,hs$blackjack
+	sta	dealer+dealerstate
+	
+	jmp	dealer$done
+
+dealer$bust:
+	lxi	h,dram+dealermsgoff
+	shld	cursor
+
+	lxi	d,mbust
+	call	gprint
+
+	mvi	a,hs$bust
+	sta	dealer+dealerstate
+
+	jmp	dealer$done
+
+
+ght$hand:	ds	ptrsize
+gethandtotal:
+	shld	ght$hand
+	lxi	d,handsoft
+	dad	d
+	mov	a,m
+	cpi	21
+	rnc
+	lhld	ght$hand
+	lxi	d,handhard
+	dad	d
+	mov	a,m
 	ret
 ;/*}}}*/
 
@@ -456,24 +684,22 @@ player$hit:
 ;/*}}}*/
 
 updatetotals:
-	mov	c,a
-
-	push	h
-	lxi	d,handhard
+	push	h		;preserve hand
+	lxi	d,handhard	;hand->hard += hardvalue
 	dad	d
-	mov	a,m
-	add	c
+	add	m
 	mov	m,a
-	pop	h
 
-	push	h
-	lxi	d,handsoft
+	pop	h		;restore hand
+	push	h		;preserve hand
+	lxi	d,handsoft	;hand->soft += softvalue
 	dad	d
-	mov	a,m
-	add	b
+	mov	a,b
+	add	m
 	mov	m,a
-	pop	h
-	ret
+
+	pop	h		;restore hand
+	ret			;return
 
 ;procedure dealer$hiddenhit (void): [dealer]
 ;trys to draws a card for the dealer, then displays face down
@@ -599,7 +825,6 @@ movenext$overflow:
 ;helper procs
 ;/*{{{*/
 
-
 ;procedure handaddcard (DE=handptr, HL=cardptr): A=boolerr
 ;add a card to a hand, if it cannot be done, return false, otherwise true
 ;side effects: assume all
@@ -702,10 +927,15 @@ resetplayer:
 	sta	player+playerhandarr+(0*handsize)+handcount
 	sta	player+playerhandarr+(0*handsize)+handsoft
 	sta	player+playerhandarr+(0*handsize)+handhard
-	
+
 	;player.handcount = 1
 	inr	a
 	sta	player+playerhcount
+
+	;player.handarr[0].state = normal
+	mvi	a,hs$normal
+	sta	player+playerhandarr+(0*handsize)+handstate
+	
 
 	ret
 ;/*}}}*/
@@ -726,10 +956,12 @@ initdealer:
 	sta	dealer+dealercount
 	sta	dealer+dealersoft
 	sta	dealer+dealerhard
+
+	mvi	a,hs$normal
+	sta	dealer+dealerstate
 	ret
 
 ;/*}}}*/
-
 
 
 ;procedure initdeck (void): [deck] HL=[deck$index]
@@ -1126,7 +1358,6 @@ drawsign:
 	inx	h
 	mov	d,m
 	xchg
-	lxi	d,gmsignsize
 	call	gdraw
 	pop	h
 	ret
@@ -1151,7 +1382,6 @@ drawface:
 	inx	h
 	mov	d,m
 	xchg
-	lxi	d,gmfacesize
 	call	gdraw
 	pop	h
 	ret
@@ -1307,52 +1537,164 @@ curup:
 ;/*}}}*/
 
 
-;procedure gdraw (de=arraylen, hl=*pixelarr, [cursor]): <display> 
-;takes an array of pixels, and draws them to dram, relative to cursor
-;side effects: AF BC DE HL [dram] [gdraw$arrptr] [gdraw$i] 
+;procedure gdraw (hl=texture *s, [cursor]): <display> 
+;draws a texture to the screen at cursor
+;side effects: unknown
 ;/*{{{*/
-gdraw$arrptr:	ds	2	;*pixel
-gdraw$i		ds	2	;iterator u16
-gdraw:	;hl=pixel array
-	;de=array len
-	shld	gdraw$arrptr	;store pixelarray
-	xchg			;hl=array len
-	shld	gdraw$i		;store arraylen
+gdraw$self:	ds	ptrsize
+gdraw$iter:	ds	ptrsize
+gdraw$endcur:	ds	offsetsize
+gdraw:	;hl=texture *self_ptr
+	shld	gdraw$self
+
+	lhld	cursor		;HL=cursor
+	push	h		;preserver cursor
+
+	lhld	gdraw$self	;iter = self_ptr->data
+	lxi	d,texturedata
+	dad	d
+	shld	gdraw$iter
+
+	lhld	gdraw$self	;B = self_ptr->width
+	lxi	d,texturewidth
+	dad	d
+	mov	b,m
+
+	lhld	gdraw$self	;c = self_ptr->height
+	lxi	d,textureheight
+	dad	d
+	mov	c,m
+
+	lhld	cursor		;HL=cursor
+	mov	a,h		;H = cursor.x + self_ptr->width
+	add	b
+	mov	h,a
+	mov	a,l		;L = cursor.y + self_ptr->height
+	add	c
+	mov	l,a
+	shld	gdraw$endcur	;end_cursor = HL
+
+	lhld	cursor		;HL=cursor
+	mov	c,h		;C=cursor.x	never modified
+
+	;fall through
 gdraw$loop:
-	lhld	gdraw$i
-	xra	a		;a=0
-	cmp	h		;if (h == 0 && l == 0) break;
-	jnz	gdraw$block
+	lhld	gdraw$endcur	;DE=end_cursor
+	xchg
+	lhld	cursor		;HL=cursor
+
+	mov	a,d		;if (cursor.x == end_cursor.x) move$nextrow()
+	cmp	h
+	cz	gdraw$nextrow
+
+	mov	a,e		;if (cursor.y == end_cursor.y) done
 	cmp	l
 	jz	gdraw$done
 	;fall through
-gdraw$block:
-	lhld	gdraw$arrptr	;hl=*struct pixel
-	mov	e,m		;de=pixel->offset (little endian)
+gdraw$continue:	
+	lhld	gdraw$iter	;A=databyte
+	mov	a,m
+	lhld	cursor		;HL=cursor
+	mov	m,a		;*cursor = databyte
+
+	lhld	gdraw$iter	;iter++
 	inx	h
-	mov	d,m
-	inx	h		;hl=&pixel.data
-	mov	b,m		;b=pixel->data
-	inx	h		;hl=&pixel.mask
-	mov	c,m		;c=pixel->mask
-	lhld	cursor		;hl=cursor position
-	dad	d		;hl=cursor+offset
-	mov	a,m		;a=old display data 
-	ana	c		;a &= pixel->mask
-	ora	b		;a |= pixel->data
-	mov	m,a		;write the data into dram
+	shld	gdraw$iter
 
-	lhld	gdraw$arrptr	;hl=*struct pixel
-	lxi	d,pixelsize	;de=sizeof (struct pixel)
-	dad	d		;hl=*struct pixel++
-	shld	gdraw$arrptr	;store the ptr for next iteration
-	lhld	gdraw$i		;hl=iter
-	dcx	h		;hl--
-	shld	gdraw$i		;iter=hl
+	call	gdraw$nextcol	;iterate to next column
 
-	jmp	gdraw$loop	;loop
+	jmp	gdraw$loop
+	
+gdraw$nextcol:	
+	lxi	h,cursor+offsetx
+	inr	m
+	ret
+
+gdraw$nextrow:	
+	lhld	cursor		;HL = cursor
+	inr	l		;cursor.y++
+	mov	h,c		;cursor.x = initial_cursor_x
+	shld	cursor
+	ret
 
 gdraw$done:
+	pop	h		;restore cursor
+	shld	cursor
+	ret
+;/*}}}*/
+
+
+;procedure gputchar (A=char, B=linestart.x): <display> [cursor]
+;draws character (A) to screen at cursor
+;side effects: yes
+;/*{{{*/
+gputchar:
+	cpi	CR	! jz	gputc$cr
+	cpi	LF	! jz	gputc$lf 
+	jmp	gputc$graphic
+
+gputc$cr:
+	lxi	h,cursor+offsetx
+	mov	m,b
+	ret
+
+gputc$lf:
+	lxi	h,cursor+offsety
+	mov	a,m
+	adi	gmfont$linefeed
+	mov	m,a
+	ret
+	
+gputc$graphic:
+	sui	gmfontoffset	;HL=(u16)((char - fontoffset) * 2)
+	mvi	h,0
+	mov	l,a
+	dad	h
+	lxi	d,gmfont	;DE=fontptr
+	dad	d		;HL=fontptr+texture_offset
+	call	derefget
+	push	h
+	call	gdraw		;print the character
+
+	pop	h
+	lxi	d,texturewidth	;B=char_texture->width
+	dad	d
+	mov	a,m
+
+	lhld	cursor		;HL=cursor
+	add	h		;cursor.x += char_texture->width
+	mov	h,a
+	shld	cursor
+	ret
+;/*}}}*/
+
+
+;procedure gprint (de=srcstr, [cursor]): <display>
+;prints a message in ascii at cursor
+;side effects: idk man, im tired
+;/*{{{*/
+gprint:
+	lxi	h,cursor+offsetx	;restore x addr for newline
+	mov	b,m
+
+	xchg			;iter in HL
+
+	;fall through
+gprint$loop:
+	mov	a,m		;A=*iter
+	cpi	0		;if (char == NULL) done
+	jz	gprint$done
+	inx	h
+
+	push	H		;preserve iter
+	push	B		;preserve linestart.x
+	call	gputchar	;print the character
+	pop	B
+	pop	h
+
+	jmp	gprint$loop	;loop
+
+gprint$done:
 	ret
 ;/*}}}*/
 
@@ -1773,74 +2115,76 @@ dealer:			ds	dealersize
 
 ;welcome screen graphics
 ;/*{{{*/
-;struct pixel gmwelcome[gmwelcomelen]
-gmwelcomelen	equ	4
-gmwelcome:     ;y   x	pixel.data   pixel.mask
-	db	2,  2,	1010$1010b,  0000$0000b
-	db	2,  3,	0101$0101b,  0000$0000b
-	db	2,  2,	1111$0000b,  0000$1111b
-	db	2,  3,	1111$0000b,  0000$0000b
+;struct texture gmwelcome
+gmwelcome:
+	;	w,  h
+	db	2,  2
+	;	data
+	db	1010$1010b, 0101$0101b
+	db	1111$0000b, 1111$0000b
+
 ;/*}}}*/
 
 ;card sign graphics
 ;/*{{{*/
-;struct pixel *gmsignarr[4]
+;struct texture *gmsignarr[]
 gmsignarr:
 	dw	gmspade
 	dw	gmheart
 	dw	gmclover
 	dw	gmdiamond
 
-gmsignwidth	equ	2
-gmsignheight	equ	8
-gmsignsize	equ	gmsignwidth * gmsignheight
-
-;struct pixel gmheart[gmsignsize]
-;               x  y  data        mask          x  y  data        mask
+;struct texture gmheart, gmdiamond, gmclover, gmspade
 gmheart:
-	db	0, 0, 0011$1110B, 0000$0000b,	0, 1, 0111$1100B, 0000$0000b
-	db	1, 0, 0111$1111B, 0000$0000b,	1, 1, 1111$1110B, 0000$0000b
-	db	2, 0, 1111$1111B, 0000$0000b,	2, 1, 1111$1111B, 0000$0000b
-	db	3, 0, 1111$1111B, 0000$0000b,	3, 1, 1111$1111B, 0000$0000b
-	db	4, 0, 0111$1111B, 0000$0000b,	4, 1, 1111$1110B, 0000$0000b
-	db	5, 0, 0011$1111B, 0000$0000b,	5, 1, 1111$1100B, 0000$0000b
-	db	6, 0, 0000$1111B, 0000$0000b,	6, 1, 1111$0000B, 0000$0000b
-	db	7, 0, 0000$0011B, 0000$0000b,	7, 1, 1100$0000B, 0000$0000b
+	;	w, h
+	db	2, 8
+	;	pixel data
+	db	0011$1110B, 0111$1100B
+	db	0111$1111B, 1111$1110B
+	db	1111$1111B, 1111$1111B
+	db	1111$1111B, 1111$1111B
+	db	0111$1111B, 1111$1110B
+	db	0011$1111B, 1111$1100B
+	db	0000$1111B, 1111$0000B
+	db	0000$0011B, 1100$0000B
 
 gmdiamond:
-	db	0, 0, 0000$0001b, 0000$0000b,	0, 1, 1000$0000b, 0000$0000b
-	db	1, 0, 0000$0111b, 0000$0000b,	1, 1, 1110$0000b, 0000$0000b
-	db	2, 0, 0001$1111b, 0000$0000b,	2, 1, 1111$1000b, 0000$0000b
-	db	3, 0, 0011$1111b, 0000$0000b,	3, 1, 1111$1100b, 0000$0000b
-	db	4, 0, 0011$1111b, 0000$0000b,	4, 1, 1111$1100b, 0000$0000b
-	db	5, 0, 0001$1111b, 0000$0000b,	5, 1, 1111$1000b, 0000$0000b
-	db	6, 0, 0000$0111b, 0000$0000b,	6, 1, 1110$0000b, 0000$0000b
-	db	7, 0, 0000$0001b, 0000$0000b,	7, 1, 1000$0000b, 0000$0000b
+	db	2, 8
+	db	0000$0001b, 1000$0000b
+	db	0000$0111b, 1110$0000b
+	db	0001$1111b, 1111$1000b
+	db	0011$1111b, 1111$1100b
+	db	0011$1111b, 1111$1100b
+	db	0001$1111b, 1111$1000b
+	db	0000$0111b, 1110$0000b
+	db	0000$0001b, 1000$0000b
 
 gmspade:
-	db	0, 0, 0000$0011b, 0000$0000b,	0, 1, 1100$0000b, 0000$0000b
-	db	1, 0, 0000$1111b, 0000$0000b,	1, 1, 1111$0000b, 0000$0000b
-	db	2, 0, 0011$1111b, 0000$0000b,	2, 1, 1111$1100b, 0000$0000b
-	db	3, 0, 0111$1111b, 0000$0000b,	3, 1, 1111$1110b, 0000$0000b
-	db	4, 0, 1111$1111b, 0000$0000b,	4, 1, 1111$1111b, 0000$0000b
-	db	5, 0, 0111$1111b, 0000$0000b,	5, 1, 1111$1110b, 0000$0000b
-	db	6, 0, 0011$1001b, 0000$0000b,	6, 1, 1001$1100b, 0000$0000b
-	db	7, 0, 0000$0011b, 0000$0000b,	7, 1, 1100$0000b, 0000$0000b
+	db	2, 8
+	db	0000$0011b, 1100$0000b
+	db	0000$1111b, 1111$0000b
+	db	0011$1111b, 1111$1100b
+	db	0111$1111b, 1111$1110b
+	db	1111$1111b, 1111$1111b
+	db	0111$1111b, 1111$1110b
+	db	0011$1001b, 1001$1100b
+	db	0000$0011b, 1100$0000b
 
 gmclover:
-	db	0, 0, 0000$0011b, 0000$0000b,	0, 1, 1100$0000b, 0000$0000b
-	db	1, 0, 0000$0111b, 0000$0000b,	1, 1, 1110$0000b, 0000$0000b
-	db	2, 0, 0000$0111b, 0000$0000b,	2, 1, 1110$0000b, 0000$0000b
-	db	3, 0, 0111$1011b, 0000$0000b,	3, 1, 1101$1110b, 0000$0000b
-	db	4, 0, 1111$1111b, 0000$0000b,	4, 1, 1111$1111b, 0000$0000b
-	db	5, 0, 1111$1101b, 0000$0000b,	5, 1, 1011$1111b, 0000$0000b
-	db	6, 0, 0111$1001b, 0000$0000b,	6, 1, 1001$1110b, 0000$0000b
-	db	7, 0, 0000$0011b, 0000$0000b,	7, 1, 1100$0000b, 0000$0000b
+	db	2, 8
+	db	0000$0011b, 1100$0000b
+	db	0000$0111b, 1110$0000b
+	db	0000$0111b, 1110$0000b
+	db	0111$1011b, 1101$1110b
+	db	1111$1111b, 1111$1111b
+	db	1111$1101b, 1011$1111b
+	db	0111$1001b, 1001$1110b
+	db	0000$0011b, 1100$0000b
 ;/*}}}*/
 
 ;card face graphics
 ;/*{{{*/
-;struct pixel *gmsignarr[13]
+;struct texture *gmsignarr[]
 gmcardfont:
 	dw	gmcardfont$two
 	dw	gmcardfont$three
@@ -1858,173 +2202,1272 @@ gmcardfont:
 
 gmfacewidth	equ	2
 gmfaceheight	equ	8
-gmfacesize	equ	gmfacewidth * gmfaceheight
 
+;struct texture gmcardfont$two, gmcardfont$three, ...
 gmcardfont$two:
-;		x, y, databyte,   bitmask	x, y, databyte,   bitmask
-	db	0, 0, 0000$0111B, 0000$0000B, 	0, 1, 1110$0000B, 0000$0000B
-	db	1, 0, 0000$1000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
-	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$1000B, 0000$0000B
-	db	3, 0, 0000$0000B, 0000$0000B,	3, 1, 0001$0000B, 0000$0000B
-	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 0110$0000B, 0000$0000B
-	db	5, 0, 0000$0001B, 0000$0000B,	5, 1, 1000$0000B, 0000$0000B
-	db	6, 0, 0000$0110B, 0000$0000B,	6, 1, 0000$0000B, 0000$0000B
-	db	7, 0, 0001$1111B, 0000$0000B,	7, 1, 1111$1000B, 0000$0000B
+	;	w, h
+	db	2, 8
+	;	pixel data
+	db	0000$0111B, 1110$0000B
+	db	0000$1000B, 0001$0000B
+	db	0001$0000B, 0000$1000B
+	db	0000$0000B, 0001$0000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0001$1111B, 1111$1000B
 
 gmcardfont$three:
-	db	0, 0, 0001$1111B, 0000$0000B,	0, 1, 1111$1000B, 0000$0000B
-	db	1, 0, 0000$0000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
-	db	2, 0, 0000$0000B, 0000$0000B,	2, 1, 0110$0000B, 0000$0000B
-	db	3, 0, 0000$0001B, 0000$0000B,	3, 1, 1100$0000B, 0000$0000B
-	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 0010$0000B, 0000$0000B
-	db	5, 0, 0000$0000B, 0000$0000B,	5, 1, 0001$0000B, 0000$0000B
-	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0010$0000B, 0000$0000B
-	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1100$0000B, 0000$0000B
+	db	2, 8
+	db	0001$1111B, 1111$1000B
+	db	0000$0000B, 0001$0000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0001B, 1100$0000B
+	db	0000$0000B, 0010$0000B
+	db	0000$0000B, 0001$0000B
+	db	0001$0000B, 0010$0000B
+	db	0000$1111B, 1100$0000B
 
 gmcardfont$four:
-	db	0, 0, 0000$0000B, 0000$0000B,	0, 1, 0110$0000B, 0000$0000B
-	db	1, 0, 0000$0000B, 0000$0000B,	1, 1, 1010$0000B, 0000$0000B
-	db	2, 0, 0000$0001B, 0000$0000B,	2, 1, 0010$0000B, 0000$0000B
-	db	3, 0, 0000$0010B, 0000$0000B,	3, 1, 0010$0000B, 0000$0000B
-	db	4, 0, 0000$0100B, 0000$0000B,	4, 1, 0010$0000B, 0000$0000B
-	db	5, 0, 0000$1111B, 0000$0000B,	5, 1, 1111$1000B, 0000$0000B
-	db	6, 0, 0000$0000B, 0000$0000B,	6, 1, 0010$0000B, 0000$0000B
-	db	7, 0, 0000$0000B, 0000$0000B,	7, 1, 0010$0000B, 0000$0000B
+	db	2, 8
+	db	0000$0000B, 0110$0000B
+	db	0000$0000B, 1010$0000B
+	db	0000$0001B, 0010$0000B
+	db	0000$0010B, 0010$0000B
+	db	0000$0100B, 0010$0000B
+	db	0000$1111B, 1111$1000B
+	db	0000$0000B, 0010$0000B
+	db	0000$0000B, 0010$0000B
 
 gmcardfont$five:
-	db	0, 0, 0001$1111B, 0000$0000B,	0, 1, 1111$1000B, 0000$0000B
-	db	1, 0, 0001$0000B, 0000$0000B,	1, 1, 0000$0000B, 0000$0000B
-	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$0000B, 0000$0000B
-	db	3, 0, 0000$1111B, 0000$0000B,	3, 1, 1110$0000B, 0000$0000B
-	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 0001$0000B, 0000$0000B
-	db	5, 0, 0000$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
-	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0000$1000B, 0000$0000B
-	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1111$0000B, 0000$0000B
+	db	2, 8
+	db	0001$1111B, 1111$1000B
+	db	0001$0000B, 0000$0000B
+	db	0001$0000B, 0000$0000B
+	db	0000$1111B, 1110$0000B
+	db	0000$0000B, 0001$0000B
+	db	0000$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0000$1111B, 1111$0000B
 
 gmcardfont$six:
-	db	0, 0, 0000$1111B, 0000$0000B,	0, 1, 1111$0000B, 0000$0000B
-	db	1, 0, 0001$0000B, 0000$0000B,	1, 1, 0000$1000B, 0000$0000B
-	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$0000B, 0000$0000B
-	db	3, 0, 0001$0111B, 0000$0000B,	3, 1, 1111$0000B, 0000$0000B
-	db	4, 0, 0001$1000B, 0000$0000B,	4, 1, 0000$1000B, 0000$0000B
-	db	5, 0, 0001$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
-	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0000$1000B, 0000$0000B
-	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1111$0000B, 0000$0000B
+	db	2, 8
+	db	0000$1111B, 1111$0000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$0000B
+	db	0001$0111B, 1111$0000B
+	db	0001$1000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0000$1111B, 1111$0000B
 
 gmcardfont$seven:
-	db	0, 0, 0001$1111B, 0000$0000B,	0, 1, 1111$1000B, 0000$0000B
-	db	1, 0, 0000$0000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
-	db	2, 0, 0000$0000B, 0000$0000B,	2, 1, 0010$0000B, 0000$0000B
-	db	3, 0, 0000$0111B, 0000$0000B,	3, 1, 1111$1000B, 0000$0000B
-	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 1000$0000B, 0000$0000B
-	db	5, 0, 0000$0001B, 0000$0000B,	5, 1, 0000$0000B, 0000$0000B
-	db	6, 0, 0000$0010B, 0000$0000B,	6, 1, 0000$0000B, 0000$0000B
-	db	7, 0, 0000$0100B, 0000$0000B,	7, 1, 0000$0000B, 0000$0000B
+	db	2, 8
+	db	0001$1111B, 1111$1000B
+	db	0000$0000B, 0001$0000B
+	db	0000$0000B, 0010$0000B
+	db	0000$0111B, 1111$1000B
+	db	0000$0000B, 1000$0000B
+	db	0000$0001B, 0000$0000B
+	db	0000$0010B, 0000$0000B
+	db	0000$0100B, 0000$0000B
 
 gmcardfont$eight:
-	db	0, 0, 0000$0111B, 0000$0000B,	0, 1, 1110$0000B, 0000$0000B
-	db	1, 0, 0000$1000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
-	db	2, 0, 0000$1000B, 0000$0000B,	2, 1, 0001$0000B, 0000$0000B
-	db	3, 0, 0000$0111B, 0000$0000B,	3, 1, 1110$0000B, 0000$0000B
-	db	4, 0, 0000$1000B, 0000$0000B,	4, 1, 0001$0000B, 0000$0000B
-	db	5, 0, 0001$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
-	db	6, 0, 0000$1000B, 0000$0000B,	6, 1, 0001$0000B, 0000$0000B
-	db	7, 0, 0000$0111B, 0000$0000B,	7, 1, 1110$0000B, 0000$0000B
+	db	2, 8
+	db	0000$0111B, 1110$0000B
+	db	0000$1000B, 0001$0000B
+	db	0000$1000B, 0001$0000B
+	db	0000$0111B, 1110$0000B
+	db	0000$1000B, 0001$0000B
+	db	0001$0000B, 0000$1000B
+	db	0000$1000B, 0001$0000B
+	db	0000$0111B, 1110$0000B
 
 gmcardfont$nine:
-	db	0, 0, 0000$1111B, 0000$0000B,	0, 1, 1111$0000B, 0000$0000B
-	db	1, 0, 0001$0000B, 0000$0000B,	1, 1, 0000$1000B, 0000$0000B
-	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$1000B, 0000$0000B
-	db	3, 0, 0001$0000B, 0000$0000B,	3, 1, 0001$1000B, 0000$0000B
-	db	4, 0, 0000$1111B, 0000$0000B,	4, 1, 1110$1000B, 0000$0000B
-	db	5, 0, 0000$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
-	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0000$1000B, 0000$0000B
-	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1111$0000B, 0000$0000B
+	db	2, 8
+	db	0000$1111B, 1111$0000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0001$1000B
+	db	0000$1111B, 1110$1000B
+	db	0000$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0000$1111B, 1111$0000B
 
 gmcardfont$ten:
-	db	0, 0, 1100$0000B, 0000$0000B,	0, 1, 1111$1110B, 0000$0000B
-	db	1, 0, 0010$0001B, 0000$0000B,	1, 1, 0000$0101B, 0000$0000B
-	db	2, 0, 0010$0001B, 0000$0000B,	2, 1, 0000$1001B, 0000$0000B
-	db	3, 0, 0010$0001B, 0000$0000B,	3, 1, 0001$0001B, 0000$0000B
-	db	4, 0, 0010$0001B, 0000$0000B,	4, 1, 0010$0001B, 0000$0000B
-	db	5, 0, 0010$0001B, 0000$0000B,	5, 1, 0100$0001B, 0000$0000B
-	db	6, 0, 0010$0001B, 0000$0000B,	6, 1, 1000$0001B, 0000$0000B
-	db	7, 0, 1111$1000B, 0000$0000B,	7, 1, 1111$1110B, 0000$0000B
+	db	2, 8
+	db	1100$0000B, 1111$1110B
+	db	0010$0001B, 0000$0101B
+	db	0010$0001B, 0000$1001B
+	db	0010$0001B, 0001$0001B
+	db	0010$0001B, 0010$0001B
+	db	0010$0001B, 0100$0001B
+	db	0010$0001B, 1000$0001B
+	db	1111$1000B, 1111$1110B
 
 gmcardfont$ace:
-	db	0, 0, 0000$0011B, 0000$0000B,	0, 1, 1100$0000B, 0000$0000B
-	db	1, 0, 0000$0100B, 0000$0000B,	1, 1, 0010$0000B, 0000$0000B
-	db	2, 0, 0000$1000B, 0000$0000B,	2, 1, 0001$0000B, 0000$0000B
-	db	3, 0, 0000$1000B, 0000$0000B,	3, 1, 0001$0000B, 0000$0000B
-	db	4, 0, 0001$1111B, 0000$0000B,	4, 1, 1111$1000B, 0000$0000B
-	db	5, 0, 0001$0000B, 0000$0000B,	5, 1, 0000$1000B, 0000$0000B
-	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0000$1000B, 0000$0000B
-	db	7, 0, 0001$0000B, 0000$0000B,	7, 1, 0000$1000B, 0000$0000B
+	db	2, 8
+	db	0000$0011B, 1100$0000B
+	db	0000$0100B, 0010$0000B
+	db	0000$1000B, 0001$0000B
+	db	0000$1000B, 0001$0000B
+	db	0001$1111B, 1111$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
 
 gmcardfont$king:
-	db	0, 0, 0001$0000B, 0000$0000B,	0, 1, 0001$0000B, 0000$0000B
-	db	1, 0, 0001$0000B, 0000$0000B,	1, 1, 0010$0000B, 0000$0000B
-	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0100$0000B, 0000$0000B
-	db	3, 0, 0001$1001B, 0000$0000B,	3, 1, 1000$0000B, 0000$0000B
-	db	4, 0, 0001$0110B, 0000$0000B,	4, 1, 0000$0000B, 0000$0000B
-	db	5, 0, 0001$0001B, 0000$0000B,	5, 1, 1000$0000B, 0000$0000B
-	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0110$0000B, 0000$0000B
-	db	7, 0, 0001$0000B, 0000$0000B,	7, 1, 0001$1000B, 0000$0000B
+	db	2, 8
+	db	0001$0000B, 0001$0000B
+	db	0001$0000B, 0010$0000B
+	db	0001$0000B, 0100$0000B
+	db	0001$1001B, 1000$0000B
+	db	0001$0110B, 0000$0000B
+	db	0001$0001B, 1000$0000B
+	db	0001$0000B, 0110$0000B
+	db	0001$0000B, 0001$1000B
 
 gmcardfont$queen:
-	db	0, 0, 0000$0111B, 0000$0000B,	0, 1, 1110$0000B, 0000$0000B
-	db	1, 0, 0000$1000B, 0000$0000B,	1, 1, 0001$0000B, 0000$0000B
-	db	2, 0, 0001$0000B, 0000$0000B,	2, 1, 0000$1000B, 0000$0000B
-	db	3, 0, 0001$0000B, 0000$0000B,	3, 1, 0000$1000B, 0000$0000B
-	db	4, 0, 0001$0000B, 0000$0000B,	4, 1, 0100$1000B, 0000$0000B
-	db	5, 0, 0000$1000B, 0000$0000B,	5, 1, 0011$0000B, 0000$0000B
-	db	6, 0, 0000$0111B, 0000$0000B,	6, 1, 1111$0000B, 0000$0000B
-	db	7, 0, 0000$0000B, 0000$0000B,	7, 1, 0000$1000B, 0000$0000B
+	db	2, 8
+	db	0000$0111B, 1110$0000B
+	db	0000$1000B, 0001$0000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0100$1000B
+	db	0000$1000B, 0011$0000B
+	db	0000$0111B, 1111$0000B
+	db	0000$0000B, 0000$1000B
 
 gmcardfont$jack:
-	db	0, 0, 0000$1111B, 0000$0000B,	0, 1, 1111$1000B, 0000$0000B
-	db	1, 0, 0000$0000B, 0000$0000B,	1, 1, 0100$0000B, 0000$0000B
-	db	2, 0, 0000$0000B, 0000$0000B,	2, 1, 0100$0000B, 0000$0000B
-	db	3, 0, 0000$0000B, 0000$0000B,	3, 1, 0100$0000B, 0000$0000B
-	db	4, 0, 0000$0000B, 0000$0000B,	4, 1, 0100$0000B, 0000$0000B
-	db	5, 0, 0001$0000B, 0000$0000B,	5, 1, 0100$0000B, 0000$0000B
-	db	6, 0, 0001$0000B, 0000$0000B,	6, 1, 0100$0000B, 0000$0000B
-	db	7, 0, 0000$1111B, 0000$0000B,	7, 1, 1000$0000B, 0000$0000B
-
-;0
-;	db	0, 0, 0000$1111B, 0000$0000B,	0, 0, 1111$0000B, 0000$0000B
-;	db	0, 0, 0001$0000B, 0000$0000B,	0, 0, 0010$1000B, 0000$0000B
-;	db	0, 0, 0001$0000B, 0000$0000B,	0, 0, 0100$1000B, 0000$0000B
-;	db	0, 0, 0001$0000B, 0000$0000B,	0, 0, 1000$1000B, 0000$0000B
-;	db	0, 0, 0001$0001B, 0000$0000B,	0, 0, 0000$1000B, 0000$0000B
-;	db	0, 0, 0001$0010B, 0000$0000B,	0, 0, 0000$1000B, 0000$0000B
-;	db	0, 0, 0001$0100B, 0000$0000B,	0, 0, 0000$1000B, 0000$0000B
-;	db	0, 0, 0000$1111B, 0000$0000B,	0, 0, 1111$0000B, 0000$0000B
-
+	db	2, 8
+	db	0000$1111B, 1111$1000B
+	db	0000$0000B, 0100$0000B
+	db	0000$0000B, 0100$0000B
+	db	0000$0000B, 0100$0000B
+	db	0000$0000B, 0100$0000B
+	db	0001$0000B, 0100$0000B
+	db	0001$0000B, 0100$0000B
+	db	0000$1111B, 1000$0000B
 ;/*}}}*/
 
 ;font graphics
 ;/*{{{*
+;     0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+;00  \0 -- -- -- -- -- -- -- -- -- LF -- -- CR -- --
+;10  -- TB -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+;20  SP BG  "  #  $  %  &  '  (  )  *  +  ,  -  .  /
+;30  0  1  2  3  4  5  6  7  8  9  :  ;  <  =  >  ?
+;40  @  A  B  C  D  E  F  G  H  I  J  K  L  M  N  O
+;50  P  Q  R  S  T  U  V  W  X  Y  Z  [  \  ]  ^  _
+;60  `  a  b  c  d  e  f  g  h  i  j  k  l  m  n  o
+;70  p  q  r  s  t  u  v  w  x  y  z  {  |  } ~  --
+
+;LF  line feed
+;CR  cartridge return
+;TB  Tab
+;Sp  Space
+;BG  Bang
+
 ;struct pixel *gmsignarr[13]
-;gmfontalpha:
-;	dw	gmfont$a,	gmfont$b,	gmfont$c,	gmfont$d
-;	dw	gmfont$e,	gmfont$f,	gmfont$g,	gmfont$h
-;	dw	gmfont$i,	gmfont$j,	gmfont$k,	gmfont$l
-;	dw	gmfont$m,	gmfont$n,	gmfont$o,	gmfont$p
-;	dw	gmfont$q,	gmfont$r,	gmfont$s,	gmfont$t
-;	dw	gmfont$u,	gmfont$v,	gmfont$w,	gmfont$x
-;	dw	gmfont$y,	gmfont$z,	
-;
-;gmfontextra:
-;	dw	gmfont$comma, 	gmfont$period,	gmfont$qmark,	gmfont$bang
-;	dw	gmfont$space
-;
-;gmfontnum:
-;	dw	gmfont$zero,	gmfont$one, 	gmfont$two,	gmfont$three
-;	dw	gmfont$four,	gmfont$five, 	gmfont$six, 	gmfont$seven
-;	dw	gmfont$eight,	gmfont$nine
-;
-;gmfacesize	equ	16
+;deref from offset to skip first 0x20 characters
+gmfont$linefeed	equ	18
+gmfontoffset	equ	(020h)
+gmfont:
+	;20-2f
+	;SP BG  "  #  $  %  &  '  (  )  *  +  ,  -  .  /
+	dw	gmfont$space,	gmfont$bang,	gmfont$dquote,	gmfont$hash
+	dw	gmfont$dollar,	gmfont$percent,	gmfont$and,	gmfont$squote
+	dw	gmfont$popen,	gmfont$pclose,	gmfont$star,	gmfont$plus
+	dw	gmfont$comma,	gmfont$hyphen,	gmfont$period,	gmfont$fslash
+
+	;30-3f
+	;0  1  2  3  4  5  6  7  8  9  :  ;  <  =  >  ?
+	dw	gmfont$zero,	gmfont$one,	gmfont$two,	gmfont$three
+	dw	gmfont$four,	gmfont$five,	gmfont$six,	gmfont$seven
+	dw	gmfont$eight,	gmfont$nine,	gmfont$colon,	gmfont$semi
+	dw	gmfont$less,	gmfont$equal,	gmfont$more,	gmfont$question
+
+	;40-4f
+	;@  A  B  C  D  E  F  G  H  I  J  K  L  M  N  O
+	dw	gmfont$at,	gmfont$cap$a,	gmfont$cap$b,	gmfont$cap$c
+	dw	gmfont$cap$d,	gmfont$cap$e,	gmfont$cap$f,	gmfont$cap$g
+	dw	gmfont$cap$h,	gmfont$cap$i,	gmfont$cap$j,	gmfont$cap$k
+	dw	gmfont$cap$l,	gmfont$cap$m,	gmfont$cap$n,	gmfont$cap$o
+
+	;50-5f
+	;P  Q  R  S  T  U  V  W  X  Y  Z  [  \  ]  ^  _
+	dw	gmfont$cap$p,	gmfont$cap$q,	gmfont$cap$r,	gmfont$cap$s
+	dw	gmfont$cap$t,	gmfont$cap$u,	gmfont$cap$v,	gmfont$cap$w
+	dw	gmfont$cap$x,	gmfont$cap$y,	gmfont$cap$z,	gmfont$bopen
+	dw	gmfont$fslash,	gmfont$bclose,	gmfont$carat,	gmfont$under
+
+	;60-6f
+	;`  a  b  c  d  e  f  g  h  i  j  k  l  m  n  o
+	dw	gmfont$tick,	gmfont$low$a,	gmfont$low$b,	gmfont$low$c
+	dw	gmfont$low$d,	gmfont$low$e,	gmfont$low$f,	gmfont$low$g
+	dw	gmfont$low$h,	gmfont$low$i,	gmfont$low$j,	gmfont$low$k
+	dw	gmfont$low$l,	gmfont$low$m,	gmfont$low$n,	gmfont$low$o
+
+	;70-7e 
+	;p  q  r  s  t  u  v  w  x  y  z  {  |  } ~  --
+	dw	gmfont$low$p,	gmfont$low$q,	gmfont$low$r,	gmfont$low$s
+	dw	gmfont$low$t,	gmfont$low$u,	gmfont$low$v,	gmfont$low$w
+	dw	gmfont$low$x,	gmfont$low$y,	gmfont$low$z,	gmfont$copen
+	dw	gmfont$vline,	gmfont$cclose,	gmfont$squigle
+
+
+gmfont$unknown:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1111$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$0000B, 0000$1000B
+	db	0001$1111B, 1111$1000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+
+gmfont$space:
+;		w  h
+	db	2, 12
+;		data
+	dw	0,0,0,0,0,0
+	dw	0,0,0,0,0,0
+
+gmfont$bang:
+	db	1,12
+	db	0000$0000B
+	db	0000$0000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0000$0000B
+	db	0001$1000B
+	db	0000$0000B
+	db	0000$0000B
+gmfont$dquote:	equ	gmfont$unknown
+gmfont$hash:	equ	gmfont$unknown
+gmfont$dollar:	equ	gmfont$unknown
+gmfont$percent:	equ	gmfont$unknown
+gmfont$and:	equ	gmfont$unknown
+gmfont$squote:
+	db	1,12
+	db	0000$0000B
+	db	0000$1100B
+	db	0000$1100B
+	db	0011$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+gmfont$popen:
+	db	1,12
+	db	0000$0000B
+	db	0000$0110B
+	db	0001$1000B
+	db	0001$1000B
+	db	0110$0000B
+	db	0110$0000B
+	db	0110$0000B
+	db	0110$0000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0000$0110B
+	db	0000$0000B
+gmfont$pclose:
+	db	1,12
+	db	0000$0000B
+	db	0110$0000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0000$0110B
+	db	0000$0110B
+	db	0000$0110B
+	db	0000$0110B
+	db	0001$1000B
+	db	0001$1000B
+	db	0110$0000B
+	db	0000$0000B
+gmfont$star:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0001$1001B, 1001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0001$1001B, 1001$1000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$plus:	equ	gmfont$unknown
+gmfont$comma:
+	db	1,12
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$1100B
+	db	0000$1100B
+	db	0011$0000B
+	db	0000$0000B
+	db	0000$0000B
+gmfont$hyphen:	equ	gmfont$unknown
+gmfont$period:
+	db	1,12
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0001$1000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+gmfont$fslash:	equ	gmfont$unknown
+gmfont$zero:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$one:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0111B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$two:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0000B, 0001$1000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1111B, 1111$1000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$three:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1111$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0001B, 1110$0000B
+	db	0000$0000B, 0001$1000B
+	db	0000$0000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$four:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0110B, 0110$0000B
+	db	0001$1000B, 0110$0000B
+	db	0001$1111B, 1111$1000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0001B, 1111$1000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$five:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1111$1000B
+	db	0001$1000B, 0000$0000B
+	db	0001$1000B, 0000$0000B
+	db	0001$1111B, 1110$0000B
+	db	0000$0000B, 0001$1000B
+	db	0000$0000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$six:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0001B, 1110$0000B
+	db	0000$0110B, 0000$0000B
+	db	0001$1000B, 0000$0000B
+	db	0001$1111B, 1110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$seven:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1111$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0000B, 0001$1000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$eight:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$nine:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1111$1000B
+	db	0000$0000B, 0001$1000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0111B, 1000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$colon:
+	db	1,12
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0001$1000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0001$1000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+gmfont$semi:
+	db	1,12
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$1100B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$1100B
+	db	0000$1100B
+	db	0011$0000B
+	db	0000$0000B
+	db	0000$0000B
+gmfont$less:	equ	gmfont$unknown
+gmfont$equal:	equ	gmfont$unknown
+gmfont$more:	equ	gmfont$unknown
+gmfont$question:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$1111B, 0000$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$0000B, 0011$0000B
+	db	0000$0000B, 0011$0000B
+	db	0000$0000B, 0011$0000B
+	db	0000$0011B, 1100$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$at:	equ	gmfont$unknown
+gmfont$cap$a:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0111B, 1110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0111$1110B, 0111$1110B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$b:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1110$0000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0110B, 0001$1000B
+	db	0001$1111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$c:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0001B, 1111$1000B
+	db	0000$0110B, 0001$1000B
+	db	0001$1000B, 0000$0000B
+	db	0001$1000B, 0000$0000B
+	db	0001$1000B, 0000$0000B
+	db	0001$1000B, 0000$0000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0001B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$d:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0011$1111B, 1100$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0000$1100B
+	db	0000$1100B, 0000$1100B
+	db	0000$1100B, 0000$1100B
+	db	0000$1100B, 0000$1100B
+	db	0000$1100B, 0011$0000B
+	db	0011$1111B, 1100$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$e:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1111$1000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0001$1000B
+	db	0001$1111B, 1111$1000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$f:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1111$1000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0001$1111B, 1000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$g:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 1111$0000B
+	db	0000$1100B, 0011$0000B
+	db	0011$0000B, 0000$0000B
+	db	0011$0000B, 0000$0000B
+	db	0011$0000B, 1111$1100B
+	db	0011$0000B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0011B, 1100$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$h:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0111$1110B, 0111$1110B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1111B, 1111$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0111$1110B, 0111$1110B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$i:
+	db	1,12
+	db	0000$0000B
+	db	0111$1110B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0111$1110B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+gmfont$cap$j:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 1111$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$1100B, 1100$0000B
+	db	0000$1111B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$k:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0011$1111B, 0011$1100B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 1100$0000B
+	db	0000$1111B, 0000$0000B
+	db	0000$1100B, 1100$0000B
+	db	0000$1100B, 1100$0000B
+	db	0000$1100B, 0011$0000B
+	db	0011$1111B, 0011$1100B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$l:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0001$1000B
+	db	0001$1111B, 1111$1000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$m:
+	db	3,12
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0001$1111B, 1000$0001B, 1111$1000B
+	db	0000$0111B, 1000$0001B, 1110$0000B
+	db	0000$0110B, 0110$0110B, 0110$0000B
+	db	0000$0110B, 0110$0110B, 0110$0000B
+	db	0000$0110B, 0110$0110B, 0110$0000B
+	db	0000$0110B, 0001$1000B, 0110$0000B
+	db	0000$0110B, 0001$1000B, 0110$0000B
+	db	0001$1111B, 1000$0001B, 1111$1000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+gmfont$cap$n:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0111$1000B, 0111$1110B
+	db	0001$1110B, 0001$1000B
+	db	0001$1110B, 0001$1000B
+	db	0001$1001B, 1001$1000B
+	db	0001$1001B, 1001$1000B
+	db	0001$1000B, 0111$1000B
+	db	0001$1000B, 0111$1000B
+	db	0111$1110B, 0001$1000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$o:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0110$0000B, 0000$0110B
+	db	0110$0000B, 0000$0110B
+	db	0110$0000B, 0000$0110B
+	db	0110$0000B, 0000$0110B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$p:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1110$0000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0001$1111B, 1000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$q:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0110$0000B, 0000$0110B
+	db	0110$0000B, 0000$0110B
+	db	0110$0000B, 0000$0110B
+	db	0110$0000B, 0000$0110B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0000B, 0111$1000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$r:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0011$1111B, 1100$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1111B, 1100$0000B
+	db	0000$1100B, 1100$0000B
+	db	0000$1100B, 0011$0000B
+	db	0011$1111B, 0011$1100B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$s:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0111B, 1001$1000B
+	db	0001$1000B, 0111$1000B
+	db	0001$1000B, 0000$0000B
+	db	0000$0111B, 1000$0000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0000B, 0001$1000B
+	db	0001$1110B, 0001$1000B
+	db	0001$1001B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$t:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1111$1000B
+	db	0001$1001B, 1001$1000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$u:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0111$1110B, 0111$1110B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$v:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0111$1110B, 0111$1110B
+	db	0001$1000B, 0001$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$w:
+	db	3,12
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0001$1111B, 1000$0001B, 1111$1000B
+	db	0000$0110B, 0000$0000B, 0110$0000B
+	db	0000$0110B, 0001$1000B, 0110$0000B
+	db	0000$0110B, 0001$1000B, 0110$0000B
+	db	0000$0110B, 0110$0110B, 0110$0000B
+	db	0000$0110B, 0110$0110B, 0110$0000B
+	db	0000$0001B, 1000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0001B, 1000$0000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+gmfont$cap$x:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0111$1110B, 0111$1110B
+	db	0001$1000B, 0001$1000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0110B, 0110$0000B
+	db	0001$1000B, 0001$1000B
+	db	0111$1110B, 0111$1110B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$y:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0111$1110B, 0111$1110B
+	db	0001$1000B, 0001$1000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0111B, 1110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$cap$z:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0001$1111B, 1111$1000B
+	db	0001$1000B, 0001$1000B
+	db	0000$0000B, 0110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0001$1000B, 0001$1000B
+	db	0001$1111B, 1111$1000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$bopen:	equ	gmfont$unknown
+gmfont$bslash:	equ	gmfont$unknown
+gmfont$bclose:	equ	gmfont$unknown
+gmfont$carat:	equ	gmfont$unknown
+gmfont$under:	equ	gmfont$unknown
+gmfont$tick:	equ	gmfont$unknown
+gmfont$low$a:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 1100$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0000B, 1111$0000B
+	db	0000$0011B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0011B, 1111$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$b:
+	db	2,12
+	db	0011$1100B, 0000$0000B
+	db	0000$1100B, 0000$0000B
+	db	0000$1100B, 0000$0000B
+	db	0000$1100B, 1111$0000B
+	db	0000$1111B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1111B, 1100$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$c:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 1111$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0000$0000B
+	db	0000$1100B, 0000$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0011B, 1100$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$d:
+	db	2,12
+	db	0000$0000B, 1111$0000B
+	db	0000$0000B, 0011$0000B
+	db	0000$0000B, 0011$0000B
+	db	0000$0011B, 1111$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 1111$0000B
+	db	0000$0011B, 0011$1100B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$e:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 1111$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1111B, 1100$0000B
+	db	0000$1100B, 0000$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0011B, 1100$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$f:
+	db	2,12
+	db	0000$0000B, 1111$0000B
+	db	0000$0011B, 0011$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$1111B, 1111$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$1111B, 1100$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$g:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 1100$1100B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0011B, 1100$0000B
+	db	0000$1100B, 0000$0000B
+	db	0000$0011B, 1111$0000B
+	db	0000$1100B, 0000$1100B
+	db	0000$1111B, 1111$0000B
+gmfont$low$h:
+	db	2,12
+	db	0011$1100B, 0000$0000B
+	db	0000$1100B, 0000$0000B
+	db	0000$1100B, 0000$0000B
+	db	0000$1100B, 1111$0000B
+	db	0000$1111B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0011$1111B, 0011$1100B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$i:
+	db	1,12
+	db	0000$0000B
+	db	0001$1000B
+	db	0000$0000B
+	db	0111$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0111$1110B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+gmfont$low$j:
+	db	1,12
+	db	0000$0000B
+	db	0000$0110B
+	db	0000$0000B
+	db	0001$1110B
+	db	0000$0110B
+	db	0000$0110B
+	db	0000$0110B
+	db	0000$0110B
+	db	0000$0110B
+	db	0000$0110B
+	db	0110$0110B
+	db	0111$1000B
+gmfont$low$k:
+	db	2,12
+	db	0001$1110B, 0000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0000$0000B
+	db	0000$0110B, 0111$1000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0111B, 1000$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0110B, 0110$0000B
+	db	0001$1110B, 0111$1000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$l:
+	db	1,12
+	db	0111$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0001$1000B
+	db	0111$1110B
+	db	0000$0000B
+	db	0000$0000B
+	db	0000$0000B
+gmfont$low$m:
+	db	3,12
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0001$1110B, 0111$1001B, 1110$0000B
+	db	0000$0111B, 1001$1110B, 0110$0000B
+	db	0000$0110B, 0001$1000B, 0110$0000B
+	db	0000$0110B, 0001$1000B, 0110$0000B
+	db	0000$0110B, 0001$1000B, 0110$0000B
+	db	0001$1110B, 0111$1100B, 1111$1000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B, 0000$0000B
+gmfont$low$n:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0011$1100B, 1111$0000B
+	db	0000$1111B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0011$1100B, 1111$1100B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$o:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 1100$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0011B, 1100$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$p:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0011$1100B, 1111$0000B
+	db	0000$1111B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1111B, 1100$0000B
+	db	0000$1100B, 0000$0000B
+	db	0000$1100B, 0000$0000B
+	db	0011$1111B, 0000$0000B
+gmfont$low$q:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$1111B, 0011$1100B
+	db	0000$1100B, 1111$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0011B, 1111$0000B
+	db	0000$0000B, 0011$0000B
+	db	0000$0000B, 0011$0000B
+	db	0000$0000B, 1111$1100B
+gmfont$low$r:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$1111B, 0011$1100B
+	db	0000$0011B, 1100$1100B
+	db	0000$0011B, 0000$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$1111B, 1100$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$s:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 1111$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1111B, 1100$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$t:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$1111B, 1111$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$0011B, 0011$0000B
+	db	0000$0000B, 1111$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$u:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0011$1100B, 1111$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 1111$0000B
+	db	0000$0011B, 0011$1100B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$v:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0011$1100B, 1111$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1100B, 1100$0000B
+	db	0000$1111B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$w:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0111$1110B, 0111$1110B
+	db	0001$1000B, 0001$1000B
+	db	0001$1001B, 1001$1000B
+	db	0001$1001B, 1001$1000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$x:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0001$1110B, 0111$1000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0110B, 0110$0000B
+	db	0001$1110B, 0111$1000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$low$y:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0001$1110B, 0111$1110B
+	db	0000$0110B, 0001$1000B
+	db	0000$0110B, 0001$1000B
+	db	0000$0110B, 0110$0000B
+	db	0000$0001B, 1110$0000B
+	db	0000$0001B, 1000$0000B
+	db	0000$0001B, 1000$0000B
+	db	0001$1001B, 1000$0000B
+	db	0001$1110B, 0000$0000B
+gmfont$low$z:
+	db	2,12
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$1111B, 1111$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$0000B, 1100$0000B
+	db	0000$0011B, 0000$0000B
+	db	0000$1100B, 0011$0000B
+	db	0000$1111B, 1111$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+	db	0000$0000B, 0000$0000B
+gmfont$copen:	equ	gmfont$unknown
+gmfont$vline:	equ	gmfont$unknown
+gmfont$cclose:	equ	gmfont$unknown
+gmfont$squigle:	equ	gmfont$unknown
 ;/*}}}*/
 
 
@@ -2052,9 +3495,9 @@ genprand:	ds	2	;psudo random number ptrarray
 cpmstack:	ds	2
 stacksize	equ	1024
 stackstart:	ds	stacksize
-progstack:	equ	$
+progstack	equ	$
 
-memory:		equ	$
+memory		equ	$
 
 
 ; vim: ts=8 sts=8 sw=8 noet fdm=marker
