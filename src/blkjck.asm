@@ -1,3 +1,8 @@
+;https://github.com/sage-etcher/tempsave.git
+;Thu Jul 11 10:37:15 AM EDT 2024
+
+;Copyright (C) 2024 Sage I. Hendricks
+;MIT License
 
 
 ;data types (structures and enums)
@@ -15,15 +20,18 @@ structbase	equ	00000h
 enumbase	equ	0
 enumiter	equ	1
 
-;struct offset {
+;struct offset 
+;{		;/*{{{*/
 ;  u8 y,
 ;  u8 x,
 ;}
 offsety		equ	structbase
 offsetx		equ	u8size + offsety
 offsetsize	equ	u8size + offsetx
+;/*}}}*/
 
-;struct texture { 
+;struct texture 
+;{		;/*{{{*/
 ;  u8	width,
 ;  u8   height,
 ;  u8   data[]
@@ -32,8 +40,10 @@ texturewidth	equ	structbase
 textureheight	equ	u8size + texturewidth
 texturedata	equ	u8size + textureheight
 ;the texturesize is determinate by it's width*height
+;/*}}}*/
 
-;enum handstate {
+;enum handstate 
+;{		;/*{{{*/
 ;  hs$normal    = 0000 0001
 ;  hs$bust      = 0000 0010
 ;  hs$blackjack = 0000 0100
@@ -41,8 +51,10 @@ texturedata	equ	u8size + textureheight
 hs$normal	equ	0000$0001b
 hs$bust		equ	0000$0010b
 hs$blackjack	equ	0000$0100b
+;/*}}}*/
 
-;enum cardface {
+;enum cardface 
+;{		;/*{{{*/
 ;  face$two   = 0x00   
 ;  face$three = 0x01   
 ;  face$four  = 0x02   
@@ -70,8 +82,10 @@ face$queen	equ	enumiter + face$jack
 face$king 	equ	enumiter + face$queen
 face$ace  	equ	enumiter + face$king
 face$max	equ	face$ace
+;/*}}}*/
 
-;enum cardsign {
+;enum cardsign 
+;{		;/*{{{*/
 ;  sign$spade   = 0x00
 ;  sign$heart   = 0x01
 ;  sign$clover  = 0x02
@@ -82,8 +96,10 @@ sign$heart	equ	enumiter + sign$spade
 sign$clover	equ	enumiter + sign$heart
 sign$diamond	equ	enumiter + sign$clover
 sign$max	equ	sign$diamond
+;/*}}}*/
 
-;struct card {
+;struct card 
+;{		;/*{{{*/
 ;  u8 face
 ;  u8 sign
 ;  <pad to 16bits/2bytes>	;makes multiplication easier
@@ -91,10 +107,13 @@ sign$max	equ	sign$diamond
 cardface	equ	structbase
 cardsign	equ	cardface    + u8size
 cardsize	equ	2
+
 ;if cardsize is too small, asm.com will complain (V error code)
 cardsizechk	equ	cardsize - (cardsign + u8size)
+;/*}}}*/
 
-;struct hand {
+;struct hand 
+;{		;/*{{{*/
 ;  u8  count
 ;  u8  softtotal
 ;  u8  hardtotal
@@ -108,18 +127,20 @@ handhard	equ	handsoft  + u8size
 handstate	equ	handhard  + u8size
 handm		equ	handstate + u8size
 handsize	equ	handm     + (ptrsize*maxhandcards)
-
+;/*}}}*/
 
 ;typedef struct hand dealer;
+;/*{{{*/
 dealercount	equ	handcount
 dealersoft	equ	handsoft
 dealerhard	equ	handhard
 dealerstate	equ	handstate
 dealerm		equ	handm
 dealersize	equ	handsize
+;/*}}}*/
 
-
-;struct player {
+;struct player 
+;{		;/*{{{*/
 ;  char  name[namelen]
 ;  u16   score
 ;  u16   bet
@@ -136,7 +157,7 @@ playerhcount	equ	playerbet     + u16size
 playerhandi	equ	playerhcount  + u8size
 playerhandarr	equ	playerhandi   + ptrsize
 playersize	equ	playerhandarr + (handsize*phandlen)
-
+;/*}}}*/
 
 
 ;/*}}}*/
@@ -170,6 +191,8 @@ gx	equ	00100h		;move > 1 cell in dram (8px)
 gy	equ	00001h		;move v 1 cell in dram (1px)
 ;/*}}}*/
 
+;program assembler time constants
+;/*{{{*/
 LF		equ	0A0H
 CR		equ	0D0H
 				;visibly if were 1:1
@@ -209,6 +232,7 @@ TRAP	SET	(((dealerhandoff XOR playerhandoff) AND 0FF00H) SHR 8)
 IF TRAP
 error_player_and_dealer_x_offsets_differ:
 ENDIF
+;/*}}}*/
 
 
 ;program start
@@ -233,59 +257,9 @@ exit:
 halt:	hlt
 	jmp	halt
 
-;main procedures
+
+;screen procedures
 ;/*{{{*/
-
-
-;procedure getcardvalue (HL=cardptr): A=hardvalue B=softvalue
-;return the value associated with a card
-;side effects: idk i stopped keeping track
-;/*{{{*/
-getcardvalue:
-	push	h	;preserve cardptr
-
-	lxi	d,cardface	;A=cardptr->face
-	dad	d
-	mov	a,m
-
-	cpi	face$ace	! jz	cardvalue$ace
-	
-	cpi	face$king	! jz	cardvalue$face
-	cpi	face$queen	! jz	cardvalue$face
-	cpi	face$jack	! jz	cardvalue$face
-
-	cpi	face$ten	! jz	cardvalue$number
-	cpi	face$nine	! jz	cardvalue$number
-	cpi	face$eight	! jz	cardvalue$number
-	cpi	face$seven	! jz	cardvalue$number
-	cpi	face$six	! jz	cardvalue$number
-	cpi	face$five	! jz	cardvalue$number
-	cpi	face$four	! jz	cardvalue$number
-	cpi	face$three	! jz	cardvalue$number
-	cpi	face$two	! jz	cardvalue$number
-
-	jmp	cardvalue$unknown
-cardvalue$number:
-	adi	2-face$two
-	mov	b,a
-	jmp	cardvalue$exit
-cardvalue$ace:
-	mvi	b,11
-	mvi	a,1
-	jmp	cardvalue$exit
-cardvalue$face:
-	mvi	a,10	
-	mov	b,a
-	jmp	cardvalue$exit
-cardvalue$unknown:
-	xra	a
-	mov	b,a
-	jmp	cardvalue$exit
-
-cardvalue$exit:
-	pop	h	;restore cardptr
-	ret
-;/*}}}*/
 
 ;procedure drawwelcome (void): tsalt
 ;draws welcome page and defines tsalt
@@ -376,6 +350,7 @@ player$turn:
 	jmp	game$loop	;and wait for next key
 
 game$hit:
+;/*{{{*/
 	call	player$hit	;player hits
 
 	lhld	player+playerhandi
@@ -389,8 +364,10 @@ game$hit:
 	jz	player$bust
 
 	jmp	game$loop	;and returns to prompt
+;/*}}}*/
 
 game$double:
+;/*{{{*/
 	lhld	player$cursor
 	mov	a,h
 	adi	doublecardx
@@ -408,12 +385,12 @@ game$double:
 	jz	player$bust
 
 	jmp	player$done	;and their turn is over
+;/*}}}*/
 
 game$stand:
-	;fallthrough
 player$done:
-	;fall through
 dealer$turn:
+;/*{{{*/
 	lhld	dealer+dealerm		;draw first card faceup
 	call	dealer$drawcard
 	
@@ -440,10 +417,11 @@ dealer$loop:
 	jz	dealer$bust
 
 	jmp	dealer$loop		;check for bust of bj
+;/*}}}*/
 
 dealer$done:
-
 game$results:
+;/*{{{*/
 	;B = player->handi->state
 	lhld	player+playerhandi
 	lxi	d,handstate
@@ -496,42 +474,8 @@ game$results:
 
 	;else lose
 	jmp	game$lose
+;/*}}}*/
 
-game$tie:
-	lxi	h,dram+gamemsgoff
-	shld	cursor
-	
-	lxi	d,mtie
-	call	gprint
-
-	jmp	gameover
-
-game$win:
-	lxi	h,dram+gamemsgoff
-	shld	cursor
-	
-	lxi	d,mwin
-	call	gprint
-
-	jmp	gameover
-
-game$blackjack:
-	lxi	h,dram+gamemsgoff
-	shld	cursor
-	
-	lxi	d,mblackjack
-	call	gprint
-
-	jmp	gameover
-
-game$lose:
-	lxi	h,dram+gamemsgoff
-	shld	cursor
-	
-	lxi	d,mlose
-	call	gprint
-
-	jmp	gameover
 
 gameover:
 	call	readkey			;read a key
@@ -540,49 +484,55 @@ gameover:
 game$done:
 	ret
 
-ret$false:
-	mvi	a,false
-	ret
-ret$true:
-	mvi	a,true
-	ret
+;game result states
+game$tie:
+;/*{{{*/
+	lxi	h,dram+gamemsgoff
+	shld	cursor
+	
+	lxi	d,mtie
+	call	gprint
 
-check$21$hand:	ds	ptrsize
-check$21:
-	shld	check$21$hand	
+	jmp	gameover
+;/*}}}*/
 
-	lhld	check$21$hand
-	lxi	d,handsoft
-	dad	d
-	mov	a,m
-	cpi	21
-	jz	ret$true
+game$win:
+;/*{{{*/
+	lxi	h,dram+gamemsgoff
+	shld	cursor
+	
+	lxi	d,mwin
+	call	gprint
 
-	lhld	check$21$hand
-	lxi	d,handhard
-	dad	d
-	mov	a,m
-	cpi	21
-	jz	ret$true
+	jmp	gameover
+;/*}}}*/
 
-	jmp	ret$false
+game$blackjack:
+;/*{{{*/
+	lxi	h,dram+gamemsgoff
+	shld	cursor
+	
+	lxi	d,mblackjack
+	call	gprint
 
-check$bust:
-	lxi	d,handhard
-	dad	d
-	mov	a,m
-	cpi	21
-	jnc	ret$true
-	jmp	ret$false
+	jmp	gameover
+;/*}}}*/
+
+game$lose:
+;/*{{{*/
+	lxi	h,dram+gamemsgoff
+	shld	cursor
+	
+	lxi	d,mlose
+	call	gprint
+
+	jmp	gameover
+;/*}}}*/
 
 
-mbust:		db	'Bust!',0
-mblackjack:	db	'Blackjack!!',0
-mwin:		db	'Win!',0
-mlose:		db	'Lose',0
-mtie:		db	'Tie',0
-
+;game printable messages
 player$bj:
+;/*{{{*/
 	lxi	h,dram+playermsgoff
 	shld	cursor
 
@@ -596,8 +546,10 @@ player$bj:
 	mov	m,a
 
 	jmp	player$done
+;/*}}}*/
 
 player$bust:
+;/*{{{*/
 	lxi	h,dram+playermsgoff
 	shld	cursor
 	
@@ -611,9 +563,10 @@ player$bust:
 	mov	m,a
 
 	jmp	player$done
-
+;/*}}}*/
 
 dealer$bj:
+;/*{{{*/
 	lxi	h,dram+dealermsgoff
 	shld	cursor
 
@@ -624,8 +577,10 @@ dealer$bj:
 	sta	dealer+dealerstate
 	
 	jmp	dealer$done
+;/*}}}*/
 
 dealer$bust:
+;/*{{{*/
 	lxi	h,dram+dealermsgoff
 	shld	cursor
 
@@ -636,23 +591,15 @@ dealer$bust:
 	sta	dealer+dealerstate
 
 	jmp	dealer$done
-
-
-ght$hand:	ds	ptrsize
-gethandtotal:
-	shld	ght$hand
-	lxi	d,handsoft
-	dad	d
-	mov	a,m
-	cpi	21
-	rnc
-	lhld	ght$hand
-	lxi	d,handhard
-	dad	d
-	mov	a,m
-	ret
 ;/*}}}*/
 
+;/*}}}*/
+
+;/*}}}*/
+
+
+;game procedures
+;/*{{{*/
 
 ;procedure player$hit (void): [player]
 ;trys to draws a card for the player, then displays it
@@ -680,26 +627,8 @@ player$hit:
 	call	movenextcard		;update DE and HL to new positions
 	
 	ret
-
 ;/*}}}*/
 
-updatetotals:
-	push	h		;preserve hand
-	lxi	d,handhard	;hand->hard += hardvalue
-	dad	d
-	add	m
-	mov	m,a
-
-	pop	h		;restore hand
-	push	h		;preserve hand
-	lxi	d,handsoft	;hand->soft += softvalue
-	dad	d
-	mov	a,b
-	add	m
-	mov	m,a
-
-	pop	h		;restore hand
-	ret			;return
 
 ;procedure dealer$hiddenhit (void): [dealer]
 ;trys to draws a card for the dealer, then displays face down
@@ -760,134 +689,6 @@ dealer$drawcard:
 	lxi	h,dealer$cursor		;hl=&dealer$cursor
 	call	movenextcard		;update DE and HL to new positions
 	
-	ret
-;/*}}}*/
-
-
-;procedure movenextcard (DE=resetptr, HL=currentptr): void
-;moves cursor and cursorreset for next card
-;side effects: assume ALL
-;/*{{{*/
-mnc$cursor:	DS	ptrsize
-mnc$reset:	DS	ptrsize
-movenextcard:
-	shld	mnc$cursor
-	xchg
-	shld	mnc$reset
-	
-	lhld	mnc$cursor
-	call	derefget
-	lxi	d,dram
-	mov	a,d
-	adi	maxwidth-nextcardx-cardwidth-1
-	cmp	h
-	jc	movenext$overflow
-
-	xchg			;DE=*mnc$cursor
-	mov	a,d		;mnc$cursor->x + nextcardx
-	adi	nextcardx
-	mov	d,a
-	mov	a,e		;mnc$cursor->y + nextcardy
-	adi	nextcardy
-	mov	e,a
-
-	lhld	mnc$cursor	;*mnc$cursor = newcurosr
-	call	derefset
-
-	ret
-
-movenext$overflow:
-	lhld	mnc$reset
-	call	derefget
-
-	mov	a,h
-	xri	overflowcardx	
-	mov	h,a
-
-	mov	a,l
-	adi	overflowcardy
-	mov	l,a
-	shld	cursor
-
-	xchg			;DE=newcursor
-	lhld	mnc$cursor	;*mnc$cursor = newcursor
-	call	derefset
-
-	lhld	mnc$reset	;*mnc$reset = newcursor
-	call	derefset
-
-	ret
-;/*}}}*/
-
-;/*}}}*/
-
-
-;helper procs
-;/*{{{*/
-
-;procedure handaddcard (DE=handptr, HL=cardptr): A=boolerr
-;add a card to a hand, if it cannot be done, return false, otherwise true
-;side effects: assume all
-;/*{{{*/
-hac$phand:	DS	ptrsize
-hac$pcard:	DS	ptrsize
-handaddcard:
-	;DE=hand
-	;HL=cardptr
-	shld	hac$pcard	;store card ptr
-	xchg			;store hand ptr
-	shld	hac$phand
-
-	lhld	hac$phand	;HL=handptr->count
-	lxi	d,handcount
-	dad	d
-	mov	A,M		;A=count
-
-	cpi	maxhandcards	;if (handptr->count >= maxhandcards)
-	jnc	hac$panic	;  panic, cannot add card, hand full
-
-	push	H		;store &handptr->count
-
-	lhld	hac$phand	;HL=handptr->m[handptr->count]
-	lxi	d,handm
-	dad	d
-	xchg
-	mov	l,a		;A is still loaded from precheck
-	mvi	h,0
-	dad	h
-	dad	d
-
-	xchg			;DE=handiter	
-	lhld	hac$pcard	;HL=cardptr
-	xchg			;HL=handiter  DE=cardptr
-	
-	mov	m,e		;store loworder byte (little endian)
-	inx	h
-	mov	m,d		;store highorder byte
-	inx	h
-
-	pop	H		;HL=&handptr->count
-	inr	m		;handptr->count++
-
-hac$normal:
-	mvi	a,true		;return success
-hac$exit:
-	lhld	hac$phand	;restore hand pointer to DE
-	xchg
-	lhld	hac$pcard
-	ret
-hac$panic:
-	mvi	a,false		;return failure
-	jmp	hac$exit
-;/*}}}*/
-
-
-;procedure deckshuffle ([deck] [deck$top]): [deck] [deck$index]
-;TODO: implement shuffle procedure
-;side effects: to be defined
-;/*{{{*/
-deckshuffle:
-	;idk howwww
 	ret
 ;/*}}}*/
 
@@ -962,6 +763,254 @@ initdealer:
 	ret
 
 ;/*}}}*/
+
+
+;procedure drawborder ([cursor]): <display>
+;draw the board decorations
+;side effects: AF DE HL [dram] [border$left] [border$mleft] [border$right] \
+;              [border$mright]
+;calls: grect
+;/*{{{*/
+field$left	equ	0011$0000b
+field$right	equ	0000$1100b
+field$mleft	equ	0011$1111b
+field$mright	equ	1111$1100b
+
+drawborder:
+	mvi	a,field$left
+	sta	border$left
+	mvi	a,field$mleft
+	sta	border$mleft
+	mvi	a,field$right
+	sta	border$right
+	mvi	a,field$mright
+	sta	border$mright
+
+	mvi	d,0		;offset_a = (0,1)
+	mvi	e,1
+	mvi	h,maxwidth	;offset_b = (maxwidth,maxheight-1)
+	mvi	l,maxheight-1
+	call	grect
+
+	ret
+;/*}}}*/
+
+;/*}}}*/
+
+
+;hand procedures
+;/*{{{*/
+
+;procedure check$21 (HL=hand): A=true/false
+;check if the hand is at 21 or not
+;side effects: AF DE HL
+;/*{{{*/
+check$21$hand:	ds	ptrsize
+check$21:
+	shld	check$21$hand	
+
+	lhld	check$21$hand
+	lxi	d,handsoft
+	dad	d
+	mov	a,m
+	cpi	21
+	jz	ret$true
+
+	lhld	check$21$hand
+	lxi	d,handhard
+	dad	d
+	mov	a,m
+	cpi	21
+	jz	ret$true
+
+	jmp	ret$false
+;/*}}}*/
+
+
+;procedure check$bust (HL=hand): A=true/false
+;check if the hand has busted
+;side effects: AF DE HL
+;/*{{{*/
+check$bust:
+	lxi	d,handhard
+	dad	d
+	mov	a,m
+	cpi	21
+	jnc	ret$true
+	jmp	ret$false
+;/*}}}*/
+
+
+;procedure gethandtotal (HL=hand): A=total
+;get the real hand total (hard/soft dependingly)
+;side effects: AF DE HL [ght$hand]
+;/*{{{*/
+ght$hand:	ds	ptrsize
+gethandtotal:
+	shld	ght$hand
+	lxi	d,handsoft
+	dad	d
+	mov	a,m
+	cpi	21
+	rnc
+	lhld	ght$hand
+	lxi	d,handhard
+	dad	d
+	mov	a,m
+	ret
+;/*}}}*/
+
+
+;procedure updatetotals (HL=hand A=hardvalue B=softvalue): [hand->hard] [hand->soft]
+;update the given hand with the new soft/hard values (adds to preexisting)
+;side effects: DE A [hand->hard] [hand->soft]
+;/*{{{*/
+updatetotals:
+	push	h		;preserve hand
+	lxi	d,handhard	;hand->hard += hardvalue
+	dad	d
+	add	m
+	mov	m,a
+
+	pop	h		;restore hand
+	push	h		;preserve hand
+	lxi	d,handsoft	;hand->soft += softvalue
+	dad	d
+	mov	a,b
+	add	m
+	mov	m,a
+
+	pop	h		;restore hand
+	ret			;return
+;/*}}}*/
+
+
+;procedure handaddcard (DE=handptr, HL=cardptr): A=boolerr
+;add a card to a hand, if it cannot be done, return false, otherwise true
+;side effects: assume all
+;/*{{{*/
+hac$phand:	DS	ptrsize
+hac$pcard:	DS	ptrsize
+handaddcard:
+	;DE=hand
+	;HL=cardptr
+	shld	hac$pcard	;store card ptr
+	xchg			;store hand ptr
+	shld	hac$phand
+
+	lhld	hac$phand	;HL=handptr->count
+	lxi	d,handcount
+	dad	d
+	mov	A,M		;A=count
+
+	cpi	maxhandcards	;if (handptr->count >= maxhandcards)
+	jnc	hac$panic	;  panic, cannot add card, hand full
+
+	push	H		;store &handptr->count
+
+	lhld	hac$phand	;HL=handptr->m[handptr->count]
+	lxi	d,handm
+	dad	d
+	xchg
+	mov	l,a		;A is still loaded from precheck
+	mvi	h,0
+	dad	h
+	dad	d
+
+	xchg			;DE=handiter	
+	lhld	hac$pcard	;HL=cardptr
+	xchg			;HL=handiter  DE=cardptr
+	
+	mov	m,e		;store loworder byte (little endian)
+	inx	h
+	mov	m,d		;store highorder byte
+	inx	h
+
+	pop	H		;HL=&handptr->count
+	inr	m		;handptr->count++
+
+hac$normal:
+	mvi	a,true		;return success
+hac$exit:
+	lhld	hac$phand	;restore hand pointer to DE
+	xchg
+	lhld	hac$pcard
+	ret
+hac$panic:
+	mvi	a,false		;return failure
+	jmp	hac$exit
+;/*}}}*/
+
+
+;/*}}}*/
+
+
+;deck procedures
+;/*{{{*/
+
+;procedure deckudraw ([deck$iter]): void
+;undo deckdraw (deck$iter--)
+;side effects: assume all
+;/*{{{*/
+deckudraw:
+	lhld	deck$index	;place card back on the deck
+	inx	h
+	shld	deck$index
+	ret
+;/*}}}*/
+
+
+;procedure deckdraw ([deck]): HL=card
+;return a ptr to the top card on the deck
+;side effects: assume all
+;/*{{{*/
+deckdraw:
+	push	d
+	call	getdeckindex	;get to card of deck
+	push	h		;store the card_ptr
+
+	;reshuffle when deck empty
+	xra	a		;A=0
+	lhld	deck$index	;HL=index
+	cmp	h		;if (index == 0) shuffle
+	jnz	deckdraw$continue
+	cmp	l
+	jnz	deckdraw$continue
+	call	deckshuffle
+deckdraw$continue:	
+	lhld	deck$index	;pop card off deck
+	dcx	h
+	shld	deck$index
+
+	pop	h
+	pop	d
+	ret
+;/*}}}*/
+
+
+;procedure deckshuffle ([deck] [deck$top]): [deck] [deck$index]
+;TODO: implement shuffle procedure
+;side effects: to be defined
+;/*{{{*/
+deckshuffle:
+	;idk howwww
+	ret
+;/*}}}*/
+
+
+;procedure getdeckindex ([deck], [deck$index]): HL=deck[deck$index]
+;get the current index of the deck
+;side effects: AF DE
+;/*{{{*/
+getdeckindex:
+	;hl=deck[deck$index]
+	lhld	deck$index		;hl=index
+	dad	h			;hl=index * 2<sizeof card>
+	lxi	d,deck			;de=&deck
+	dad	d			;hl=&deck[index]
+	ret
+;/*}}}*/
+
 
 
 ;procedure initdeck (void): [deck] HL=[deck$index]
@@ -1043,57 +1092,115 @@ deckloop$done:
 	ret
 ;/*}}}*/
 
+;/*}}}*/
 
-;procedure getdeckindex ([deck], [deck$index]): HL=deck[deck$index]
-;get the current index of the deck
-;side effects: AF DE
+
+;card procedures
 ;/*{{{*/
-getdeckindex:
-	;hl=deck[deck$index]
-	lhld	deck$index		;hl=index
-	dad	h			;hl=index * 2<sizeof card>
-	lxi	d,deck			;de=&deck
-	dad	d			;hl=&deck[index]
+
+;procedure getcardvalue (HL=cardptr): A=hardvalue B=softvalue
+;return the value associated with a card
+;side effects: idk i stopped keeping track
+;/*{{{*/
+getcardvalue:
+	push	h	;preserve cardptr
+
+	lxi	d,cardface	;A=cardptr->face
+	dad	d
+	mov	a,m
+
+	cpi	face$ace	! jz	cardvalue$ace
+	
+	cpi	face$king	! jz	cardvalue$face
+	cpi	face$queen	! jz	cardvalue$face
+	cpi	face$jack	! jz	cardvalue$face
+
+	cpi	face$ten	! jz	cardvalue$number
+	cpi	face$nine	! jz	cardvalue$number
+	cpi	face$eight	! jz	cardvalue$number
+	cpi	face$seven	! jz	cardvalue$number
+	cpi	face$six	! jz	cardvalue$number
+	cpi	face$five	! jz	cardvalue$number
+	cpi	face$four	! jz	cardvalue$number
+	cpi	face$three	! jz	cardvalue$number
+	cpi	face$two	! jz	cardvalue$number
+
+	jmp	cardvalue$unknown
+cardvalue$number:
+	adi	2-face$two
+	mov	b,a
+	jmp	cardvalue$exit
+cardvalue$ace:
+	mvi	b,11
+	mvi	a,1
+	jmp	cardvalue$exit
+cardvalue$face:
+	mvi	a,10	
+	mov	b,a
+	jmp	cardvalue$exit
+cardvalue$unknown:
+	xra	a
+	mov	b,a
+	jmp	cardvalue$exit
+
+cardvalue$exit:
+	pop	h	;restore cardptr
 	ret
 ;/*}}}*/
 
 
-;procedure deckdraw ([deck]): HL=card
-;return a ptr to the top card on the deck
-;side effects: assume all
+;procedure movenextcard (DE=resetptr, HL=currentptr): void
+;moves cursor and cursorreset for next card
+;side effects: assume ALL
 ;/*{{{*/
-deckdraw:
-	push	d
-	call	getdeckindex	;get to card of deck
-	push	h		;store the card_ptr
+mnc$cursor:	DS	ptrsize
+mnc$reset:	DS	ptrsize
+movenextcard:
+	shld	mnc$cursor
+	xchg
+	shld	mnc$reset
+	
+	lhld	mnc$cursor
+	call	derefget
+	lxi	d,dram
+	mov	a,d
+	adi	maxwidth-nextcardx-cardwidth-1
+	cmp	h
+	jc	movenext$overflow
 
-	;reshuffle when deck empty
-	xra	a		;A=0
-	lhld	deck$index	;HL=index
-	cmp	h		;if (index == 0) shuffle
-	jnz	deckdraw$continue
-	cmp	l
-	jnz	deckdraw$continue
-	call	deckshuffle
-deckdraw$continue:	
-	lhld	deck$index	;pop card off deck
-	dcx	h
-	shld	deck$index
+	xchg			;DE=*mnc$cursor
+	mov	a,d		;mnc$cursor->x + nextcardx
+	adi	nextcardx
+	mov	d,a
+	mov	a,e		;mnc$cursor->y + nextcardy
+	adi	nextcardy
+	mov	e,a
 
-	pop	h
-	pop	d
+	lhld	mnc$cursor	;*mnc$cursor = newcurosr
+	call	derefset
+
 	ret
-;/*}}}*/
 
+movenext$overflow:
+	lhld	mnc$reset
+	call	derefget
 
-;procedure deckudraw ([deck$iter]): void
-;moved deck$iter back 1 card in the case of a failure
-;side effects: assume all
-;/*{{{*/
-deckudraw:
-	lhld	deck$index	;place card back on the deck
-	inx	h
-	shld	deck$index
+	mov	a,h
+	xri	overflowcardx	
+	mov	h,a
+
+	mov	a,l
+	adi	overflowcardy
+	mov	l,a
+	shld	cursor
+
+	xchg			;DE=newcursor
+	lhld	mnc$cursor	;*mnc$cursor = newcursor
+	call	derefset
+
+	lhld	mnc$reset	;*mnc$reset = newcursor
+	call	derefset
+
 	ret
 ;/*}}}*/
 
@@ -1134,65 +1241,6 @@ drawcard$facedown:
 	pop	H
 	shld	cursor
 	pop	H
-	ret
-;/*}}}*/
-
-
-;procedure drawcardb ([cursor]): <display>
-;draws the card base
-;side effects: AF B DE [dram] [border$left] [border$mleft] [border$right] \
-;              [border$mright]
-;calls: grectf, grect
-;/*{{{*/
-cardba$left	equ	1100$0000b	;left  card border a
-cardba$right	equ	0000$0011b	;right card border a
-cardba$mask	equ	1111$1111b	;left/right card mask a
-
-cardbb$left	equ	0000$1000b	;left  card border b
-cardbb$right	equ	0001$0000b	;right card border b
-cardbb$mleft	equ	1100$1111b	;left  card mask b
-cardbb$mright	equ	1111$0011b	;right card mask b
-
-	;this procedure is verry lazily done, and is infentient but it works
-	;should be optimized and "unstupided" later, for now it will suffice
-drawcardb:
-	push	H
-	lxi	d,0		;start offset
-	mvi	h,cardwidth	;stop offset
-	mvi	l,cardheight	
-	xra	a		;data = 0000$0000b
-	mov	b,a		;mask = 0000$0000b
-	call	grectf
-
-	mvi	a,cardba$left
-	sta	border$left
-	mvi	a,cardba$right
-	sta	border$right
-	mvi	a,cardba$mask
-	sta	border$mleft
-	sta	border$mright
-
-	lxi	d,0		;offset_a = (0,0)
-	mvi	h,cardwidth	;offset_b = (cardwidth,cardheight)
-	mvi	l,cardheight
-	call	grect		;draw outer border
-	
-	mvi	a,cardbb$left	;left
-	sta	border$left
-	mvi	a,cardbb$mleft	;left mask
-	sta	border$mleft
-	mvi	a,cardbb$right	;right
-	sta	border$right
-	mvi	a,cardbb$mright	;right mask
-	sta	border$mright
-	
-	mvi	d,0		;offset_a = (0,1)
-	mvi	e,2
-	mvi	h,cardwidth	;offset_b = (cardwidth, cardheight-2)
-	mvi	l,cardheight-2
-	call	grect
-
-	pop	h
 	ret
 ;/*}}}*/
 
@@ -1340,6 +1388,45 @@ back$donec:
 ;/*}}}*/
 
 
+;procedure drawflipcard (HL=cardptr, [cursor]): <display> 
+;draws a flipped card at cursor
+;side effects: AF [dram] [deckptr] [cardpos]
+;calls: curright, curdown, curleft, drawsign
+;/*{{{*/
+cardsigntl$x	equ	1
+cardsigntl$y	equ	6
+cardsignbr$x	equ	cardwidth-2-1
+cardsignbr$y	equ	cardheight-8-6
+deckptr:	DS	2
+cardpos:	DS	2
+drawflipcard:
+	push	h
+	shld	deckptr		;store deckptr
+	lhld	cursor		;store card screen position
+	shld	cardpos
+
+	lhld	cardpos		;set curosr
+	shld	cursor
+	mvi	a,001h		;move to relative position
+	call	curright
+	mvi	a,006h
+	call	curdown
+	lhld	deckptr		;get card pointer
+	call	drawface	;draw top left card face
+	
+	mvi	a,gmfaceheight+3
+	call	curdown
+	lhld	deckptr		;get card pointer
+	call	drawsign	;draw bottom right card sign
+
+	lhld	cardpos		;restore the cursor
+	shld	cursor
+	pop	h
+	ret
+
+;/*}}}*/
+
+
 ;procedure drawsign (HL=cardptr, [gmsignarr], [cursor]): <display>
 ;draws the card's sign/sign at cursor position
 ;side effects: AF BC DE [dram]
@@ -1387,76 +1474,130 @@ drawface:
 	ret
 ;/*}}}*/
 
-
-;procedure drawflipcard (HL=cardptr, [cursor]): <display> 
-;draws a flipped card at cursor
-;side effects: AF [dram] [deckptr] [cardpos]
-;calls: curright, curdown, curleft, drawsign
-;/*{{{*/
-cardsigntl$x	equ	1
-cardsigntl$y	equ	6
-cardsignbr$x	equ	cardwidth-2-1
-cardsignbr$y	equ	cardheight-8-6
-deckptr:	DS	2
-cardpos:	DS	2
-drawflipcard:
-	push	h
-	shld	deckptr		;store deckptr
-	lhld	cursor		;store card screen position
-	shld	cardpos
-
-	lhld	cardpos		;set curosr
-	shld	cursor
-	mvi	a,001h		;move to relative position
-	call	curright
-	mvi	a,006h
-	call	curdown
-	lhld	deckptr		;get card pointer
-	call	drawface	;draw top left card face
-	
-	mvi	a,gmfaceheight+3
-	call	curdown
-	lhld	deckptr		;get card pointer
-	call	drawsign	;draw bottom right card sign
-
-	lhld	cardpos		;restore the cursor
-	shld	cursor
-	pop	h
-	ret
-
-;/*}}}*/
-
-
-;procedure drawborder ([cursor]): <display>
-;draw the board decorations
-;side effects: AF DE HL [dram] [border$left] [border$mleft] [border$right] \
+;procedure drawcardb ([cursor]): <display>
+;draws the card base
+;side effects: AF B DE [dram] [border$left] [border$mleft] [border$right] \
 ;              [border$mright]
-;calls: grect
+;calls: grectf, grect
 ;/*{{{*/
-field$left	equ	0011$0000b
-field$right	equ	0000$1100b
-field$mleft	equ	0011$1111b
-field$mright	equ	1111$1100b
+cardba$left	equ	1100$0000b	;left  card border a
+cardba$right	equ	0000$0011b	;right card border a
+cardba$mask	equ	1111$1111b	;left/right card mask a
 
-drawborder:
-	mvi	a,field$left
+cardbb$left	equ	0000$1000b	;left  card border b
+cardbb$right	equ	0001$0000b	;right card border b
+cardbb$mleft	equ	1100$1111b	;left  card mask b
+cardbb$mright	equ	1111$0011b	;right card mask b
+
+	;this procedure is verry lazily done, and is infentient but it works
+	;should be optimized and "unstupided" later, for now it will suffice
+drawcardb:
+	push	H
+	lxi	d,0		;start offset
+	mvi	h,cardwidth	;stop offset
+	mvi	l,cardheight	
+	xra	a		;data = 0000$0000b
+	mov	b,a		;mask = 0000$0000b
+	call	grectf
+
+	mvi	a,cardba$left
 	sta	border$left
-	mvi	a,field$mleft
-	sta	border$mleft
-	mvi	a,field$right
+	mvi	a,cardba$right
 	sta	border$right
-	mvi	a,field$mright
+	mvi	a,cardba$mask
+	sta	border$mleft
 	sta	border$mright
 
+	lxi	d,0		;offset_a = (0,0)
+	mvi	h,cardwidth	;offset_b = (cardwidth,cardheight)
+	mvi	l,cardheight
+	call	grect		;draw outer border
+	
+	mvi	a,cardbb$left	;left
+	sta	border$left
+	mvi	a,cardbb$mleft	;left mask
+	sta	border$mleft
+	mvi	a,cardbb$right	;right
+	sta	border$right
+	mvi	a,cardbb$mright	;right mask
+	sta	border$mright
+	
 	mvi	d,0		;offset_a = (0,1)
-	mvi	e,1
-	mvi	h,maxwidth	;offset_b = (maxwidth,maxheight-1)
-	mvi	l,maxheight-1
+	mvi	e,2
+	mvi	h,cardwidth	;offset_b = (cardwidth, cardheight-2)
+	mvi	l,cardheight-2
 	call	grect
 
+	pop	h
 	ret
 ;/*}}}*/
 
+
+;/*}}}*/
+
+
+;helper procs
+;/*{{{*/
+
+;procedure ret$false (void): A=false
+;jump procedure, loads falsey value into A and return
+;side effects: A
+;/*{{{*/
+ret$false:
+	mvi	a,false
+	ret
+;/*}}}*/
+
+
+;procedure ret$true (void): A=true
+;jump procedure, loads truethy value into A and return
+;side effects: A
+;/*{{{*/
+ret$true:
+	mvi	a,true
+	ret
+;/*}}}*/
+
+
+;procedure derefget (HL=ptr): HL=*ptr
+;dereferences a ptr in HL into a 16bit value
+;side effects: F HL
+;/*{{{*/
+derefget:
+	push	d
+
+	mov	e,m
+	inx	h
+	mov	d,m
+	xchg
+
+	pop	d
+	ret
+;/*}}}*/
+
+
+;procedure derefget (DE=value HL=ptr): [ptr]
+;dereferences a ptr HL loading a 16bit value into it
+;side effects: F
+;/*{{{*/
+derefset:
+	push	h
+	push	d
+	
+	mov	m,e
+	inx	h
+	mov	m,d
+
+	pop	d
+	pop	h
+	ret
+;/*}}}*/
+
+;/*}}}*/
+
+
+;graphic procs
+;/*{{{*/
 
 ;procedure clearscr (void): <display>
 ;clears the screen
@@ -1476,11 +1617,6 @@ clearscr:
 ;/*}}}*/
 
 
-;/*}}}*/
-
-
-;graphic procs
-;/*{{{*/
 ;procedure curright (a=nbytes): HL=[cursor]
 ;move the cursor to the right n bytes
 ;side effects: AF HL [cursor]
@@ -1941,41 +2077,6 @@ gline$done:
 ;system procs
 ;/*{{{*/
 
-;procedure derefget (HL=ptr): HL=*ptr
-;dereferences a ptr in HL into a 16bit value
-;side effects: F HL
-;/*{{{*/
-derefget:
-	push	d
-
-	mov	e,m
-	inx	h
-	mov	d,m
-	xchg
-
-	pop	d
-	ret
-;/*}}}*/
-
-
-;procedure derefget (DE=value HL=ptr): [ptr]
-;dereferences a ptr HL loading a 16bit value into it
-;side effects: F
-;/*{{{*/
-derefset:
-	push	h
-	push	d
-	
-	mov	m,e
-	inx	h
-	mov	m,d
-
-	pop	d
-	pop	h
-	ret
-;/*}}}*/
-
-
 ;procedure command (c=command): (statreg1) (statreg2)
 ;send a command to the control register, and wait for the acknowledgement bit
 ;to compliment.
@@ -2111,6 +2212,14 @@ player:			ds	playersize
 dealer$cursor		ds	ptrsize
 dealer$cursorreset	ds	ptrsize
 dealer:			ds	dealersize
+
+
+;game printable messages
+mbust:		db	'Bust!',0
+mblackjack:	db	'Blackjack!!',0
+mwin:		db	'Win!',0
+mlose:		db	'Lose',0
+mtie:		db	'Tie',0
 
 
 ;welcome screen graphics
@@ -3470,7 +3579,6 @@ gmfont$cclose:	equ	gmfont$unknown
 gmfont$squigle:	equ	gmfont$unknown
 ;/*}}}*/
 
-
 ;graphics variables
 ;/*{{{*/
 ;byte *cursor;
@@ -3502,4 +3610,5 @@ memory		equ	$
 
 ; vim: ts=8 sts=8 sw=8 noet fdm=marker
 ; end of file
+
 
