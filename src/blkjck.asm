@@ -55,20 +55,22 @@ hs$blackjack	equ	0000$0100b
 
 ;enum cardface 
 ;{		;/*{{{*/
-;  face$two   = 0x00   
-;  face$three = 0x01   
-;  face$four  = 0x02   
-;  face$five  = 0x03   
-;  face$six   = 0x04   
-;  face$seven = 0x05   
-;  face$eight = 0x06   
-;  face$nine  = 0x07   
-;  face$jack  = 0x08   
-;  face$queen = 0x09   
-;  face$king  = 0x0a   
-;  face$ace   = 0x0b   
+;  face$null  = 0x00
+;  face$two   = 0x01   
+;  face$three = 0x02   
+;  face$four  = 0x03   
+;  face$five  = 0x04   
+;  face$six   = 0x05   
+;  face$seven = 0x06   
+;  face$eight = 0x07   
+;  face$nine  = 0x08   
+;  face$jack  = 0x09   
+;  face$queen = 0x0a   
+;  face$king  = 0x0b   
+;  face$ace   = 0x0c   
 ;}
-face$two	equ	enumbase
+face$bad	equ	enumbase
+face$two	equ	enumiter + face$bad
 face$three	equ	enumiter + face$two
 face$four 	equ	enumiter + face$three
 face$five 	equ	enumiter + face$four
@@ -86,12 +88,14 @@ face$max	equ	face$ace
 
 ;enum cardsign 
 ;{		;/*{{{*/
-;  sign$spade   = 0x00
-;  sign$heart   = 0x01
-;  sign$clover  = 0x02
-;  sign$diamond = 0x03
+;  sign$null    = 0x00
+;  sign$spade   = 0x01
+;  sign$heart   = 0x02
+;  sign$clover  = 0x03
+;  sign$diamond = 0x04
 ;}
-sign$spade	equ	enumbase
+sign$null	equ	enumbase
+sign$spade	equ	enumiter + sign$null
 sign$heart	equ	enumiter + sign$spade
 sign$clover	equ	enumiter + sign$heart
 sign$diamond	equ	enumiter + sign$clover
@@ -261,9 +265,9 @@ halt:	hlt
 ;screen procedures
 ;/*{{{*/
 
-;procedure drawwelcome (void): tsalt
-;draws welcome page and defines tsalt
-;side effects: (gdraw) hl de cursor tsalt
+;procedure drawwelcome (void): [seed]
+;draws welcome page and defines [seed]
+;side effects: (gdraw) hl de cursor [seed]
 ;/*{{{*/
 drawwelcome:
 
@@ -281,7 +285,7 @@ drawwelcome:
 
 				;debug solution
 	lxi	h,00000h	;hl=0000h (debug salt)
-	shld	tsalt		;store the salt
+	call	initrand
 
 	ret
 ;/*}}}*/
@@ -293,7 +297,11 @@ drawwelcome:
 ;calls: initdeck initplayer initdealer newgame
 ;/*{{{*/
 drawtestpage:
+	lxi	h,0
+	call	initrand
+
 	call	initdeck	;initialize the deck (unshuffled)
+	call	deckshuffle	;shuffle the deck
 	call	initplayer	;initialize the player object
 	call	initdealer	;initialize the dealer
 	call	newgame
@@ -948,8 +956,8 @@ hac$panic:
 ;deck procedures
 ;/*{{{*/
 
-;procedure deckudraw ([deck$iter]): void
-;undo deckdraw (deck$iter--)
+;procedure deckudraw ([deck$index]): void
+;undo deckdraw (deck$index--)
 ;side effects: assume all
 ;/*{{{*/
 deckudraw:
@@ -992,8 +1000,140 @@ deckdraw$continue:
 ;TODO: implement shuffle procedure
 ;side effects: to be defined
 ;/*{{{*/
+;the following values are assuming decksize of 512
+deckshuffle$end:	ds	ptrsize
+deckshuffle$a:		ds	ptrsize
+deckshuffle$b:		ds	ptrsize
+
 deckshuffle:
-	;idk howwww
+	lhld	deck$top	;HL = decktop
+	shld	deck$index	;deckindex = decktop
+
+	lxi	h,deck		;set shuffleiter
+	shld	deckshuffle$a
+
+	lhld	deck$top
+	dad	h
+	lxi	d,deck
+	dad	d
+	shld	deckshuffle$end
+	;fall through
+deckshuffle$loop:
+	lhld	deckshuffle$end		;DE=endptr
+	xchg
+	lhld	deckshuffle$a		;HL=iterptr
+	mov	a,h
+	cmp	d
+	jnz	deckshuffle$skip
+	mov	a,l
+	cmp	e
+	jz	deckshuffle$done
+	;fall through
+deckshuffle$skip:
+	call	rand			;HL = random
+	mov	e,h			;shuffle bits and bit and filter to 0-511
+	;0000 0001 1111 1111
+	mov	a,l
+	ani	1000$0000b
+	rlc
+	mov	d,a
+	xchg
+	dad	h
+
+	lxi	d,deck			;set shufflerandptr
+	dad	d
+	shld	deckshuffle$b
+	
+	;swap values
+	lhld	deckshuffle$b		;HL=b
+	call	derefget		;HL=*b
+	mov	b,h			;BC=*b
+	mov	c,l
+
+	lhld	deckshuffle$a		;HL=a
+	call	derefget		;HL=*a
+	xchg				;DE=*a
+	lhld	deckshuffle$b		;HL=b
+	call	derefset		;*b=*a
+
+	mov	d,b			;DE=BC
+	mov	e,c
+	lhld	deckshuffle$a		;HL=a
+	call	derefset		;*a=overhead
+
+	;increment pointers
+	lhld	deckshuffle$a		;HL=a
+	inx	h	!inx	h	;iter += sizeof (ptr)
+	shld	deckshuffle$a
+
+	jmp	deckshuffle$loop	;loop
+
+deckshuffle$done:
+deckcombine:
+	;now deck is shuffled across 512 element, we have to collectify them
+	;into an array
+	lxi	h,deck+decksize		;end ptr
+	shld	deckshuffle$end
+
+	lxi	h,deck			;start a and b at deck
+	shld	deckshuffle$a
+	shld	deckshuffle$b
+
+deckcombine$loop:
+	lhld	deckshuffle$end		;DE=endptr
+	xchg
+	lhld	deckshuffle$a		;HL=iterptr
+	mov	a,h
+	cmp	d
+	jnz	deckcombine$skip
+	mov	a,l
+	cmp	e
+	jz	deckcombine$done
+	;fall through
+deckcombine$skip:
+	lhld	deckshuffle$a
+	call	derefget
+	xra	a
+	cmp	h
+	jnz	deckcombine$swap
+	cmp	l
+	jz	deckcombine$null
+	;fall through
+deckcombine$swap:
+	
+	;swap values
+	lhld	deckshuffle$b		;HL=b
+	call	derefget		;HL=*b
+	mov	b,h			;BC=*b
+	mov	c,l
+
+	lhld	deckshuffle$a		;HL=a
+	call	derefget		;HL=*a
+	xchg				;DE=*a
+	lhld	deckshuffle$b		;HL=b
+	call	derefset		;*b=*a
+
+	mov	d,b			;DE=BC
+	mov	e,c
+	lhld	deckshuffle$a		;HL=a
+	call	derefset		;*a=overhead
+
+	
+	;increment b
+	lhld	deckshuffle$b
+	inx	h	!inx	h
+	shld	deckshuffle$b
+
+	;fall through
+deckcombine$null:
+	;increment a	
+	lhld	deckshuffle$a
+	inx	h	!inx	h
+	shld	deckshuffle$a
+
+	jmp	deckcombine$loop
+
+deckcombine$done:
 	ret
 ;/*}}}*/
 
@@ -1024,6 +1164,11 @@ ideck$signi:	ds	1
 ideck$decki:	ds	1
 
 initdeck:
+	lxi	h,deck
+	lxi	d,decksize
+	mvi	b,0
+	call	memset
+
 	lxi	h,0
 	shld	deck$index
 
@@ -1064,7 +1209,7 @@ faceloop$loop:
 
 	lxi	h,ideck$facei
 	mov	a,m
-	cpi	0
+	cpi	1
 	jz	faceloop$done
 	dcr	m
 	jmp	faceloop$loop
@@ -1072,7 +1217,7 @@ faceloop$done:
 signloop$continue:
 	lxi	h,ideck$signi
 	mov	a,m
-	cpi	0
+	cpi	1
 	jz	signloop$done
 	dcr	m
 	jmp	signloop$loop
@@ -1438,6 +1583,7 @@ drawsign:
 	dad	d
 	mov	l,m
 	mvi	h,0
+	dcx	h
 	dad	h
 	lxi	d,gmsignarr
 	dad	d
@@ -1462,6 +1608,7 @@ drawface:
 	dad	d
 	mov	l,m
 	mvi	h,0
+	dcx	h
 	dad	h
 	lxi	d,gmcardfont
 	dad	d
@@ -1538,6 +1685,65 @@ drawcardb:
 
 ;helper procs
 ;/*{{{*/
+
+;procedure memset (B=bytevalue, HL=pointer, DE=length)
+;set n number of bytes at a given poitner to a given value
+;side effects: idk
+;/*{{{*/
+memset:
+	xra	a	
+memset$loop:
+	cmp	d
+	jnz	memset$skip
+	cmp	e
+	jz	memset$done
+	;fall through
+memset$skip:
+	mov	m,b
+
+	dcx	d
+	inx	h
+	jmp	memset$loop
+	
+memset$done:
+	ret
+;/*}}}*/
+
+
+;procedure initrand (HL=userseed): [seed]
+;initialize the seed value for generation of random values
+;side effects:
+;/*{{{*/
+initrand:
+	lxi	d,initialseed	;DE=base value
+	dad	d		;combine with user value
+	shld	seed		;then store in variable
+	ret
+;/*}}}*/
+
+
+;procedure rand ([seed]): HL=random u16 value
+;generate a psudorandom value from 0 to 65503 in HL
+;side effects: [seed]
+;/*{{{*/
+;X = seed
+;a = 5
+;c = 1
+;m = 2^16
+;X=(aX + c) mod m
+rand:
+	lhld	seed	;DE=HL=[seed]
+	mov	d,h
+	mov	e,l
+	dad	h	;HL *= 5
+	dad	h
+	dad	d
+	inx	h	;HL += 1
+			;mod 2^16 done by register pair
+	shld	seed	;store seed for next iteration
+	ret		;return the 'random' value
+;/*}}}*/
+
 
 ;procedure ret$false (void): A=false
 ;jump procedure, loads falsey value into A and return
@@ -2198,7 +2404,10 @@ deck$cursor	ds	ptrsize
 numofdecks	equ	6	;number of decks
 singledecklen	equ	52	;number of cards in 1 deck
 decklen		equ	(singledecklen * numofdecks)
-deck:		ds	decklen * cardsize
+deckminsize	equ	decklen * cardsize
+decksize	equ	512 * cardsize
+decksizetrap	equ	decksize - deckminsize		;if decksize too small, will throw error
+deck:		ds	decksize
 deck$index:	dw	0 
 deck$top:	dw	0 
 
@@ -3595,9 +3804,10 @@ border$mleft:	db	1111$1111b
 border$mright:	db	1111$1111b
 ;/*}}}*/
 
+
 ;random numbers
-tsalt:		ds	2	;salt for random number generation
-genprand:	ds	2	;psudo random number ptrarray
+initialseed	equ	0110$1100$0110$1001b
+seed:		ds	2	;random number variable
 
 ;program stack
 cpmstack:	ds	2
