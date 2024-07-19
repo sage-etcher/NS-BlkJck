@@ -15,6 +15,7 @@ u8size		equ	1
 u16size		equ	2
 ptrsize		equ	u16size
 charsize	equ	u8size
+boolsize	equ	u8size
 
 structbase	equ	00000h
 enumbase	equ	0
@@ -299,7 +300,6 @@ drawwelcome:
 drawtestpage:
 	lxi	h,0
 	call	initrand
-
 	call	initdeck	;initialize the deck (unshuffled)
 	call	deckshuffle	;shuffle the deck
 	call	initplayer	;initialize the player object
@@ -313,10 +313,10 @@ drawtestpage:
 ;starts a new game, clearing variables and initiating the loop
 ;side effects: Assume ALL
 ;/*{{{*/
+game$key:	ds	charsize
 newgame:
 	;prepare variables
-	call	resetdealer
-	call	resetplayer
+	call	resetgame
 
 	;prepare the screen
 	call	clearscr	;clear the screen
@@ -342,6 +342,7 @@ newgame:
 game$loop:
 player$turn:
 	call	readkey
+	sta	game$key
 
 	cpi	'q'		;if (key == 'q') break
 	jz	game$done
@@ -349,16 +350,26 @@ player$turn:
 	cpi	'h'
 	jz	game$hit
 
-	cpi	'd'
-	jz	game$double
-
 	cpi	's'
 	jz	game$stand
 	
+	lda	valid$double
+	cpi	false
+	jz	game$loop
+
+	lda	game$key
+	cpi	'd'
+	jz	game$double
+
 	jmp	game$loop	;and wait for next key
+
 
 game$hit:
 ;/*{{{*/
+
+	mvi	a,false
+	sta	valid$double
+
 	call	player$hit	;player hits
 
 	lhld	player+playerhandi
@@ -608,6 +619,21 @@ dealer$bust:
 
 ;game procedures
 ;/*{{{*/
+
+;procedure resetgame (void): []
+;resets various game state variables
+;side effects: assume all
+;/*{{{*/
+resetgame:
+	call	resetplayer
+	call	resetdealer
+
+	mvi	a,true
+	sta	valid$double
+
+	ret
+;/*}}}*/
+
 
 ;procedure player$hit (void): [player]
 ;trys to draws a card for the player, then displays it
@@ -2399,6 +2425,9 @@ loadmainram:
 
 
 ;variable data section
+;game data section
+valid$double:	ds	boolsize
+
 ;deck allocation
 deck$cursor	ds	ptrsize
 numofdecks	equ	6	;number of decks
