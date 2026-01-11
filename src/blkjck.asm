@@ -2346,9 +2346,9 @@ kbmi$toggle:
 	call	command		;run command
 	in	statreg1	;get result
 	ani	0000$0001b	;mask away trash
-	cpi	0		;if (kbmi_flag == false) toggle
-	jz	kbmi$toggle
-	ret			;else the flag is true, return
+	cpi	0		;if (prev_kbmi_flag == true) toggle
+	jnz	kbmi$toggle
+	ret			;else the flag was false, return
 ;/*}}}*/
 
 
